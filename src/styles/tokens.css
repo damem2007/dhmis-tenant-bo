@@ -1,0 +1,124 @@
+/*
+  Shared brand tokens for the Back Office, Front Office, and Patient Portal.
+  Import this once at the root of each app's global stylesheet so all three
+  read as one product. This is also the mechanism described in the
+  architecture doc's Front Office theming section: to theme a different
+  Organization, override these same variable values (e.g. write a
+  per-tenant <style> block or set them on a wrapping element) rather than
+  forking the components.
+
+  v2: richer, more saturated accents plus two extra hues (--blue, --violet)
+  for the multi-color chip/icon system used across the dashboards — a
+  single muted green everywhere reads flat at this density; enterprise
+  dashboards typically vary the accent hue per category.
+
+  Usage:
+    1. Import this file once, globally (e.g. in your root layout or main.tsx).
+    2. Reference variables directly in Tailwind via arbitrary values:
+       className="bg-[var(--paper)] text-[var(--ink)]"
+    3. Optional: wire them into tailwind.config for named utilities instead
+       of arbitrary values — see the README for the config snippet.
+    4. Toggle dark mode by setting data-theme="dark" on <html> or <body>.
+*/
+
+:root {
+  /* Clinician / organization-owner prototype tokens (prototype lines 6–9). */
+  --bg: #f4f6f5;
+  --sf: #fff;
+  --sf2: #eef2f0;
+  --bd: #dbe3df;
+  --tx: #111a16;
+  --mu: #54655d;
+  --ac: #0b8a55;
+  --ac2: #d3f1e2;
+  --on: #fff;
+  --wn: #8a4b00;
+  --wn2: #fdebc8;
+  --er: #b42318;
+  --er2: #fde3e0;
+  --in: #1d4ed8;
+  --in2: #dfe8fd;
+  --body-bg: #e6ebe8;
+
+  /* Neutrals */
+  --ink: var(--tx);        /* prototype --tx */
+  --ink-muted: var(--mu);  /* prototype --mu */
+  --ink-faint: #94a39b;    /* placeholder / hint text */
+  --paper: var(--bg);      /* prototype --bg */
+  --surface: var(--sf);    /* prototype --sf */
+  --border: var(--bd);     /* prototype --bd */
+  --border-strong: var(--bd);
+
+  /* Primary accent — vivid emerald, not a muted sage */
+  --sage: var(--ac);       /* prototype --ac */
+  --sage-tint: var(--ac2); /* prototype --ac2 */
+  --sage-deep: var(--ac);
+
+  /* Secondary accent — used for primary CTAs only */
+  --amber: var(--wn);      /* prototype --wn */
+  --amber-tint: var(--wn2);/* prototype --wn2 */
+
+  /* Category accents — vary hue by card/badge type instead of reusing --sage everywhere */
+  --blue: var(--in);       /* prototype --in */
+  --blue-tint: var(--in2); /* prototype --in2 */
+  --violet: #8b5cf6;
+  --violet-tint: #ede4fe;
+
+  --danger: var(--er);     /* prototype --er */
+  --danger-tint: var(--er2);/* prototype --er2 */
+  --success: var(--ac);
+  --success-tint: var(--ac2);
+
+  --accent-glow: rgba(14, 169, 104, 0.12); /* subtle hero backdrop, used once, sparingly */
+
+  /* Typography */
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+[data-theme="dark"] {
+  /* Prototype dark values (prototype lines 7–9). */
+  --bg: #0d1512;
+  --sf: #131d19;
+  --sf2: #1a2621;
+  --bd: #25342d;
+  --tx: #e8f0ec;
+  --mu: #95a89e;
+  --ac: #34d399;
+  --ac2: #12382a;
+  --on: #04160e;
+  --wn: #fbbf24;
+  --wn2: #3a2b0c;
+  --er: #f87171;
+  --er2: #3d1b19;
+  --in: #93b4ff;
+  --in2: #1b2a52;
+  --body-bg: #070c0a;
+
+  --ink: var(--tx);
+  --ink-muted: var(--mu);
+  --ink-faint: #6f7d76;
+  --paper: var(--bg);
+  --surface: var(--sf);
+  --border: var(--bd);
+  --border-strong: var(--bd);
+
+  --sage: var(--ac);
+  --sage-tint: var(--ac2);
+  --sage-deep: var(--ac);
+
+  --amber: var(--wn);
+  --amber-tint: var(--wn2);
+
+  --blue: var(--in);
+  --blue-tint: var(--in2);
+  --violet: #ac8bf9;
+  --violet-tint: #2a1f42;
+
+  --danger: var(--er);
+  --danger-tint: var(--er2);
+  --success: var(--ac);
+  --success-tint: var(--ac2);
+
+  --accent-glow: rgba(52, 211, 143, 0.16);
+}
