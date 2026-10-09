@@ -1,4 +1,6 @@
 const LOADING_MS = 900;
+const loadingTimers = new Map<HTMLButtonElement, number>();
+const loadingButtons = new Set<HTMLButtonElement>();
 
 function addPasswordToggle(input: HTMLInputElement) {
   if (input.dataset.passwordToggleReady === "true") return;
@@ -28,13 +30,42 @@ function markLoading(button: HTMLButtonElement) {
   if (button.disabled || button.dataset.loading === "true") return;
   button.dataset.loading = "true";
   button.setAttribute("aria-busy", "true");
-  window.setTimeout(() => {
+  loadingButtons.add(button);
+  loadingTimers.set(button, window.setTimeout(() => {
     button.dataset.loading = "false";
     button.removeAttribute("aria-busy");
-  }, LOADING_MS);
+    loadingButtons.delete(button);
+    loadingTimers.delete(button);
+  }, LOADING_MS));
+}
+
+function bindMutationLifecycle() {
+  const start = (event: Event) => {
+    const requestKey = (event as CustomEvent<{ requestKey?: string }>).detail?.requestKey;
+    const active = [...loadingButtons].find((button) => button.dataset.loading === "true" && !button.dataset.loadingRequestKey);
+    if (!active || !requestKey) return;
+    const timer = loadingTimers.get(active);
+    if (timer) window.clearTimeout(timer);
+    loadingTimers.delete(active);
+    active.dataset.loadingRequestKey = requestKey;
+  };
+  const end = (event: Event) => {
+    const requestKey = (event as CustomEvent<{ requestKey?: string }>).detail?.requestKey;
+    if (!requestKey) return;
+    document.querySelectorAll<HTMLButtonElement>(`button[data-loading-request-key="${CSS.escape(requestKey)}"]`).forEach((button) => {
+      button.dataset.loading = "false";
+      button.removeAttribute("aria-busy");
+      delete button.dataset.loadingRequestKey;
+      loadingButtons.delete(button);
+    });
+  };
+  window.addEventListener("dhmis:mutation-start", start);
+  window.addEventListener("dhmis:mutation-end", end);
+  return () => { window.removeEventListener("dhmis:mutation-start", start); window.removeEventListener("dhmis:mutation-end", end); };
 }
 
 export function installFormEnhancements(root: ParentNode = document) {
+  const unbindMutationLifecycle = bindMutationLifecycle();
   const enhance = () => {
     root.querySelectorAll<HTMLInputElement>('input[type="password"]').forEach(addPasswordToggle);
     root.querySelectorAll<HTMLButtonElement>("button").forEach((button) => {
@@ -55,5 +86,5 @@ export function installFormEnhancements(root: ParentNode = document) {
   enhance();
   const observer = new MutationObserver(enhance);
   observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["type"] });
-  return () => observer.disconnect();
+  return () => { observer.disconnect(); unbindMutationLifecycle(); };
 }

@@ -2,6 +2,7 @@ let accessToken = "";
 let tenantSlug = "";
 let activeLocationId = "";
 const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const inFlightMutations = new Map<string, Promise<unknown>>();
 export function setToken(value: string) {
   accessToken = value;
 }
@@ -16,17 +17,23 @@ export async function api<T>(
   body?: unknown,
   method = body ? "POST" : "GET",
 ): Promise<T> {
-  const response = await fetch(`${apiBase}/v1${path}`, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-      ...(tenantSlug ? { "X-DHMIS-Tenant": tenantSlug } : {}),
-      ...(activeLocationId ? { "X-DHMIS-Location": activeLocationId } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!response.ok) {
+  const requestMethod = method.toUpperCase();
+  const serializedBody = body === undefined ? "" : JSON.stringify(body);
+  const requestKey = `${requestMethod}:${path}:${serializedBody}:${accessToken}:${tenantSlug}:${activeLocationId}`;
+  const existing = requestMethod === "GET" ? undefined : inFlightMutations.get(requestKey);
+  if (existing) return existing as Promise<T>;
+  const request = (async () => {
+    const response = await fetch(`${apiBase}/v1${path}`, {
+      method: requestMethod,
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        ...(tenantSlug ? { "X-DHMIS-Tenant": tenantSlug } : {}),
+        ...(activeLocationId ? { "X-DHMIS-Location": activeLocationId } : {}),
+      },
+      ...(body ? { body: serializedBody } : {}),
+    });
+    if (!response.ok) {
     if (response.status === 401) {
       setToken("");
       window.dispatchEvent(new Event("dhmis:unauthorized"));
@@ -44,9 +51,19 @@ export async function api<T>(
           : typeof detail?.message === "string"
             ? detail.message
             : "Request failed";
-    throw new Error(message);
+      throw new Error(message);
+    }
+    return response.json() as Promise<T>;
+  })();
+  if (requestMethod === "GET") return request;
+  window.dispatchEvent(new CustomEvent("dhmis:mutation-start", { detail: { requestKey } }));
+  inFlightMutations.set(requestKey, request);
+  try {
+    return await request;
+  } finally {
+    window.dispatchEvent(new CustomEvent("dhmis:mutation-end", { detail: { requestKey } }));
+    if (inFlightMutations.get(requestKey) === request) inFlightMutations.delete(requestKey);
   }
-  return response.json();
 }
 
 export async function download(path: string, filename: string) {
