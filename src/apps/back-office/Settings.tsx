@@ -159,7 +159,7 @@ type SettingsView =
       providerOptions: ProviderOptions;
       integrationRequests: IntegrationRequest[];
       roles: RoleOption[];
-      invitationToken: string;
+      invitationLink: string;
     };
 
 const brandTokens = ['--sage', '--sage-deep', '--paper', '--surface', '--ink'];
@@ -168,9 +168,9 @@ const emptyAuditFilters: AuditFilters = { patient_id: '', actor_id: '', start: '
 const settingsSections = ['practice', 'integrations', 'staff', 'templates', 'audit', 'roles', 'delivery'] as const;
 export type SettingsSection = (typeof settingsSections)[number];
 const settingsSectionTitles: Record<SettingsSection, string> = { practice: 'Practice policy', integrations: 'Integrations', staff: 'Staff & invitations', templates: 'Message templates', audit: 'Audit trail', roles: 'Roles & access', delivery: 'Notification delivery' };
-const templateVariables = ['clinic_name', 'clinic_phone', 'patient_first_name', 'provider_name', 'appointment_date', 'appointment_time', 'installment_amount', 'due_date', 'plan_balance'] as const;
+const templateVariables = ['clinic_name', 'clinic_phone', 'patient_first_name', 'provider_name', 'appointment_date', 'appointment_time', 'installment_amount', 'due_date', 'plan_balance', 'recipient_name', 'role', 'tenant_slug', 'platform_name', 'invitation_expires_at', 'invitation_expires_in', 'invitation_link', 'reset_link'] as const;
 const templateSamples: Record<(typeof templateVariables)[number], string> = {
-  clinic_name: 'Harbour Dental', clinic_phone: '(604) 555-0182', patient_first_name: 'Avery', provider_name: 'Dr. Jordan Lee', appointment_date: 'October 24', appointment_time: '1:00 PM', installment_amount: '$60.00', due_date: 'September 30', plan_balance: '$120.00',
+  clinic_name: 'Harbour Dental', clinic_phone: '(604) 555-0182', patient_first_name: 'Avery', provider_name: 'Dr. Jordan Lee', appointment_date: 'October 24', appointment_time: '1:00 PM', installment_amount: '$60.00', due_date: 'September 30', plan_balance: '$120.00', recipient_name: 'Dami', role: 'super admin', tenant_slug: 'smile', platform_name: 'DHMIS Platform', invitation_expires_at: 'October 10, 2026 at 10:00 AM UTC', invitation_expires_in: '24 hours', invitation_link: 'https://admin.smile.dhmis.local:5175/?invite=example-token', reset_link: 'https://admin.smile.dhmis.local:5175/?reset=example-token',
 };
 
 function renderTemplateSample(value: string) {
@@ -288,7 +288,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
     return `/organization/access/query?${query}`;
   }
 
-  async function load(invitationToken = view.type === 'ready' ? view.invitationToken : '') {
+  async function load(invitationLink = view.type === 'ready' ? view.invitationLink : '') {
     const [settings, staffAccess, invitationAccess, templates, messages, providerOptions, integrationRequests, roles] = await Promise.all([
       api<SettingsData>('/organization/settings'),
       api<Page<Staff>>(accessQuery('staff', staffPage.page, staffPage.page_size, staffFilters)),
@@ -301,7 +301,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
     ]);
     setStaffPage(staffAccess);
     setInvitationPage(invitationAccess);
-    setView({ type: 'ready', settings, staff: staffAccess.items, invitations: invitationAccess.items, templates, messages, providerOptions, integrationRequests, roles, invitationToken });
+    setView({ type: 'ready', settings, staff: staffAccess.items, invitations: invitationAccess.items, templates, messages, providerOptions, integrationRequests, roles, invitationLink });
   }
 
   async function loadAccess(kind: 'staff' | 'invitation', page: number, pageSize: number, filters: AccessFilters) {
@@ -349,12 +349,12 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
       assignments.push({ scope: 'organization', location_id: null, role: String(form.get('organization_role')) });
     }
     await run(async () => {
-      const result = await api<{ token: string }>('/organization/invites', {
+      const result = await api<{ invitation_link: string }>('/organization/invites', {
         name: form.get('name'),
         email: form.get('email'),
         assignments,
       });
-      await load(result.token);
+      await load(result.invitation_link);
     });
   }
 
@@ -402,8 +402,8 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
 
   async function resendInvitation(identifier: string) {
     await run(async () => {
-      const result = await api<{ token: string }>(`/organization/invites/${identifier}/resend`, {});
-      await load(result.token);
+      const result = await api<{ invitation_link: string }>(`/organization/invites/${identifier}/resend`, {});
+      await load(result.invitation_link);
     });
   }
 
@@ -477,7 +477,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
   if (view.type === 'loading') return <p className="panel">Loading settings…</p>;
   if (view.type === 'error') return <p className="panel" role="alert">{view.message}</p>;
 
-  const { settings, staff, invitations, templates, messages, providerOptions, integrationRequests, roles, invitationToken } = view;
+  const { settings, staff, invitations, templates, messages, providerOptions, integrationRequests, roles, invitationLink } = view;
   const organizationRoles = roles.filter((role) => role.scopes.includes('organization'));
   const locationRoles = roles.filter((role) => role.scopes.includes('location'));
   const effectiveTemplateKey = templates[selectedTemplateKey] ? selectedTemplateKey : Object.keys(templates)[0];
@@ -598,7 +598,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
               </fieldset>
             </div>
             <button className="btn-secondary" disabled={busy}>Create invitation</button>
-            {invitationToken && <p className="mt-2 break-all text-sm"><strong>One-time invitation token:</strong> {invitationToken}</p>}
+            {invitationLink && <p className="mt-2 break-all text-sm"><strong>Invitation link:</strong> <a className="underline" href={invitationLink}>{invitationLink}</a></p>}
           </form>
           <form className="mt-5 grid gap-2 md:grid-cols-4" onSubmit={(event) => {
             event.preventDefault();

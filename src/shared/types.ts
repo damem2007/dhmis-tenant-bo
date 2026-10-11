@@ -51,9 +51,14 @@ export interface Claim {
   created_at: string;
 }
 export interface Reference {
+  region?: string;
   locations: {
     id: string;
     name: string;
+    address?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    osm_place_id?: string;
     chairs: string[];
     timezone: string;
     opening_hour: number;

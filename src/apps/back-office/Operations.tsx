@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { api, money } from '../../shared/api';
 import { Empty, Field, Title } from '../../shared/Fields';
 import type { Reference } from '../../shared/types';
+import { LocationAutocomplete } from './LocationAutocomplete';
 
 type Run = (action: () => Promise<void>) => Promise<void>;
 type Credential = {
@@ -23,6 +24,7 @@ export function Operations({ reference, permissions, run, busy, refreshReference
 }) {
   const [state, setState] = useState<OperationsState>({ type: 'loading' });
   const [locationId, setLocationId] = useState(reference.locations[0]?.id || '');
+  const [newLocationFormKey, setNewLocationFormKey] = useState(0);
   const canConfigure = permissions.includes('settings');
   const location = reference.locations.find((item) => item.id === locationId);
 
@@ -55,7 +57,10 @@ export function Operations({ reference, permissions, run, busy, refreshReference
     const form = new FormData(event.currentTarget);
     await run(async () => {
       await api(`/operations/locations/${location.id}`, {
-        name: form.get('name'), timezone: form.get('timezone'),
+        name: form.get('name'), address: form.get('address') || '',
+        latitude: form.get('latitude') ? Number(form.get('latitude')) : null,
+        longitude: form.get('longitude') ? Number(form.get('longitude')) : null,
+        osm_place_id: form.get('osm_place_id') || '', timezone: form.get('timezone'),
         chairs: String(form.get('chairs')).split(',').map((chair) => chair.trim()).filter(Boolean),
         opening_hour: Number(form.get('opening')), closing_hour: Number(form.get('closing')),
         branding: location.branding || {},
@@ -65,6 +70,32 @@ export function Operations({ reference, permissions, run, busy, refreshReference
         },
       }, 'PUT');
       await refreshReference();
+    });
+  }
+
+  async function createLocation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const numberOrNull = (value: FormDataEntryValue | null) => value ? Number(value) : null;
+    await run(async () => {
+      const created = await api<{ id: string }>('/operations/locations', {
+        name: form.get('new_name'),
+        address: form.get('new_address') || '',
+        latitude: numberOrNull(form.get('latitude')),
+        longitude: numberOrNull(form.get('longitude')),
+        osm_place_id: form.get('osm_place_id') || '',
+        timezone: form.get('new_timezone'),
+        chairs: String(form.get('new_chairs')).split(',').map((chair) => chair.trim()).filter(Boolean),
+        opening_hour: Number(form.get('new_opening')),
+        closing_hour: Number(form.get('new_closing')),
+        branding: {},
+        policy: { buffer_minutes: 0, reminder_hours: 24, cancellation_notice_hours: 24, cancellation_fee_cents: 0 },
+      });
+      await refreshReference();
+      setLocationId(created.id);
+      formElement.reset();
+      setNewLocationFormKey((value) => value + 1);
     });
   }
 
@@ -83,8 +114,18 @@ export function Operations({ reference, permissions, run, busy, refreshReference
     </>}
 
     <section className="panel mt-5">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Location operations</h2><p className="muted text-sm">Overrides take precedence over organization scheduling policy.</p></div><Field label="Location"><select className="field" value={locationId} onChange={(event) => setLocationId(event.target.value)}>{reference.locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
-      {location && <form key={location.id} className="grid gap-3 md:grid-cols-4" onSubmit={saveLocation}><Field label="Name"><input className="field" name="name" defaultValue={location.name} disabled={!canConfigure} required /></Field><Field label="Timezone"><input className="field" name="timezone" defaultValue={location.timezone} disabled={!canConfigure} required /></Field><Field label="Opens"><input className="field" name="opening" type="number" min="0" max="23" defaultValue={location.opening_hour} disabled={!canConfigure} /></Field><Field label="Closes"><input className="field" name="closing" type="number" min="1" max="24" defaultValue={location.closing_hour} disabled={!canConfigure} /></Field><Field label="Operatories (comma separated)"><input className="field" name="chairs" defaultValue={location.chairs.join(', ')} disabled={!canConfigure} required /></Field><Field label="Buffer (minutes)"><input className="field" name="buffer" type="number" min="0" defaultValue={location.policy?.buffer_minutes || 0} disabled={!canConfigure} /></Field><Field label="Reminder lead (hours)"><input className="field" name="reminder" type="number" min="0" defaultValue={location.policy?.reminder_hours || 24} disabled={!canConfigure} /></Field><Field label="Cancellation notice (hours)"><input className="field" name="notice" type="number" min="0" defaultValue={location.policy?.cancellation_notice_hours || 24} disabled={!canConfigure} /></Field><Field label="Cancellation fee (CAD)"><input className="field" name="fee" type="number" min="0" step="0.01" defaultValue={(location.policy?.cancellation_fee_cents || 0) / 100} disabled={!canConfigure} /></Field>{canConfigure && <button className="btn self-end" disabled={busy}>Save location</button>}<p className="muted self-end text-xs">Capacity: {location.chairs.length} operatories · {location.closing_hour - location.opening_hour} hours/day · late fee {money(location.policy?.cancellation_fee_cents || 0)}</p></form>}
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Location operations</h2><p className="muted text-sm">Add locations or update addresses, hours, operatories, and scheduling policy.</p></div><Field label="Location"><select className="field" value={locationId} onChange={(event) => setLocationId(event.target.value)}>{reference.locations.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field></div>
+      {canConfigure && <form key={newLocationFormKey} className="mb-6 grid gap-3 rounded-lg border border-dashed border-[var(--border-strong)] p-4 md:grid-cols-2" onSubmit={createLocation}>
+        <div className="md:col-span-2"><h3 className="font-semibold">Add another location</h3><p className="muted text-sm">Search for an address and select the matching result to save its coordinates.</p></div>
+        <Field label="Location name"><input className="field" name="new_name" required /></Field>
+        <Field label="Address"><LocationAutocomplete region={reference.region || 'CA'} inputName="new_address" required /></Field>
+        <Field label="Timezone"><input className="field" name="new_timezone" defaultValue="America/Vancouver" required /></Field>
+        <Field label="Operatories (comma separated)"><input className="field" name="new_chairs" defaultValue="Op 1, Op 2" required /></Field>
+        <Field label="Opens"><input className="field" name="new_opening" type="number" min="0" max="23" defaultValue="8" required /></Field>
+        <Field label="Closes"><input className="field" name="new_closing" type="number" min="1" max="24" defaultValue="18" required /></Field>
+        <button className="btn md:col-span-2" disabled={busy}>Add location</button>
+      </form>}
+      {location && <form key={location.id} className="grid gap-3 md:grid-cols-4" onSubmit={saveLocation}><Field label="Name"><input className="field" name="name" defaultValue={location.name} disabled={!canConfigure} required /></Field><Field label="Address"><LocationAutocomplete region={reference.region || 'CA'} inputName="address" initialValue={location.address || ''} initialLatitude={location.latitude} initialLongitude={location.longitude} initialPlaceId={location.osm_place_id} required /></Field><Field label="Timezone"><input className="field" name="timezone" defaultValue={location.timezone} disabled={!canConfigure} required /></Field><Field label="Opens"><input className="field" name="opening" type="number" min="0" max="23" defaultValue={location.opening_hour} disabled={!canConfigure} /></Field><Field label="Closes"><input className="field" name="closing" type="number" min="1" max="24" defaultValue={location.closing_hour} disabled={!canConfigure} /></Field><Field label="Operatories (comma separated)"><input className="field" name="chairs" defaultValue={location.chairs.join(', ')} disabled={!canConfigure} required /></Field><Field label="Buffer (minutes)"><input className="field" name="buffer" type="number" min="0" defaultValue={location.policy?.buffer_minutes || 0} disabled={!canConfigure} /></Field><Field label="Reminder lead (hours)"><input className="field" name="reminder" type="number" min="0" defaultValue={location.policy?.reminder_hours || 24} disabled={!canConfigure} /></Field><Field label="Cancellation notice (hours)"><input className="field" name="notice" type="number" min="0" defaultValue={location.policy?.cancellation_notice_hours || 24} disabled={!canConfigure} /></Field><Field label="Cancellation fee (CAD)"><input className="field" name="fee" type="number" min="0" step="0.01" defaultValue={(location.policy?.cancellation_fee_cents || 0) / 100} disabled={!canConfigure} /></Field>{canConfigure && <button className="btn self-end" disabled={busy}>Save location</button>}<p className="muted self-end text-xs">Capacity: {location.chairs.length} operatories · {location.closing_hour - location.opening_hour} hours/day · late fee {money(location.policy?.cancellation_fee_cents || 0)}</p></form>}
     </section>
   </>;
 }
