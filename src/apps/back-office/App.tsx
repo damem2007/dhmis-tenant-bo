@@ -12,6 +12,7 @@ import { Reports } from './Reports';
 import { Operations } from './Operations';
 import { RoleDashboard } from './RoleDashboard';
 import { Account } from './Account';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 import { SiteEditor } from './SiteEditor';
 import { Phase2Support } from './Phase2Support';
 import { api, money, setActiveLocation, setToken } from '../../shared/api';
@@ -64,6 +65,7 @@ const initialUi: UiState = {
 export default function App({ tenant }: { tenant: TenantContext }) {
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<WorkspaceData | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [ui, setUi] = useState<UiState>(() => ({ ...initialUi, nav: navFromPath(tenant.slug), settingsSection: settingsSectionFromPath(tenant.slug) }));
 
   const patchUi = useCallback((next: Partial<UiState>) => {
@@ -130,10 +132,15 @@ export default function App({ tenant }: { tenant: TenantContext }) {
 
   async function handleAuthenticated() {
     const current = await api<User>('/auth/me');
-    setActiveLocation(current.selected_location_id || '');
-    applyBranding(current.branding);
-    await refresh(current);
-    setUser(current);
+    setWorkspaceLoading(true);
+    try {
+      setActiveLocation(current.selected_location_id || '');
+      applyBranding(current.branding);
+      await refresh(current);
+      setUser(current);
+    } finally {
+      setWorkspaceLoading(false);
+    }
   }
 
   async function handleSignOut() {
@@ -208,8 +215,8 @@ export default function App({ tenant }: { tenant: TenantContext }) {
     }
   }, [ui.nav, user, refreshAudit, patchUi]);
 
-  if (!user) return <Auth tenant={tenant} onAuthenticated={handleAuthenticated} />;
-  if (!data) return <p className="p-8">Loading workspace…</p>;
+  if (!user) return <><Auth tenant={tenant} onAuthenticated={handleAuthenticated} />{workspaceLoading && <WorkspaceLoadingOverlay />}</>;
+  if (!data) return <WorkspaceLoadingOverlay />;
   const currentUser = user;
   const workspace = data;
   const assignedLocations = (currentUser.assignments || []).filter((assignment) => assignment.scope === 'location');
@@ -292,6 +299,7 @@ export default function App({ tenant }: { tenant: TenantContext }) {
       )}
       {ui.notice && <div role="status" className="bg-[var(--sage-tint)] px-6 py-2 text-sm">{ui.notice}</div>}
       <ClinicalDashboard
+        organizationName={tenant.name}
         providerName={currentUser.name}
         role={currentUser.role}
         locationName={workspace.dashboard.location_name}

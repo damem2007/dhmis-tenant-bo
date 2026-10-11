@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './apps/back-office/App';
 import { setTenantSlug } from './shared/api';
@@ -12,18 +12,53 @@ function tenantSlugFromHostname(hostname: string) {
   return labels[0] || '';
 }
 
-const tenant: TenantContext = {
-  organizationId: import.meta.env.VITE_DEFAULT_TENANT_ID || '',
-  slug: import.meta.env.VITE_DEFAULT_TENANT_SLUG || tenantSlugFromHostname(window.location.hostname),
-  name: '',
-  source: 'platform-slug',
-  surface: 'back-office',
-  features: { front_office: true, booking: true, patient_portal: true },
-  branding: {},
-};
+function TenantAdminEntry() {
+  const fallback: TenantContext = {
+    organizationId: import.meta.env.VITE_DEFAULT_TENANT_ID || '',
+    slug: import.meta.env.VITE_DEFAULT_TENANT_SLUG || tenantSlugFromHostname(window.location.hostname),
+    name: import.meta.env.VITE_DEFAULT_TENANT_SLUG || tenantSlugFromHostname(window.location.hostname),
+    source: 'platform-slug',
+    surface: 'back-office',
+    features: { front_office: true, booking: true, patient_portal: true },
+    branding: {},
+  };
+  const [tenant, setTenant] = useState<TenantContext | null>(null);
 
-setTenantSlug(tenant.slug);
+  useEffect(() => {
+    const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+    const query = new URLSearchParams({ surface: 'back-office' });
+    if (fallback.slug) query.set('slug', fallback.slug);
+    else query.set('hostname', window.location.hostname);
+    fetch(`${apiBase}/v1/tenants/resolve?${query}`)
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(typeof payload?.detail === 'string' ? payload.detail : 'Clinic route was not found or is not enabled.');
+        setTenant({
+          ...fallback,
+          organizationId: payload.organization_id || fallback.organizationId,
+          slug: payload.slug || fallback.slug,
+          name: payload.name || fallback.name,
+          source: payload.source || fallback.source,
+          domain: payload.domain || undefined,
+          features: payload.features || fallback.features,
+          branding: payload.branding || fallback.branding,
+        });
+      })
+      .catch((reason) => {
+        void reason;
+        setTenant(fallback);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (tenant) setTenantSlug(tenant.slug);
+  }, [tenant]);
+
+  if (!tenant) return <div className="tenant-route-loading" role="status" aria-label="Loading clinic"><strong>DHMIS</strong><span>Loading tenant workspace…</span></div>;
+  return <App tenant={tenant} />;
+}
+
 installFormEnhancements();
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><App tenant={tenant} /></React.StrictMode>,
+  <React.StrictMode><TenantAdminEntry /></React.StrictMode>,
 );

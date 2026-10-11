@@ -80,6 +80,7 @@ export interface ClinicalDashboardProps {
   onSearch?: (query: string) => void;
   providerName: string;
   locationName: string;
+  organizationName?: string;
   role?: string;
   activeNav?: NavKey;
   dateLabel?: string;
@@ -158,6 +159,7 @@ export function ClinicalDashboard({
   onSearch,
   providerName,
   locationName,
+  organizationName = locationName,
   role = "Dentist",
   activeNav = "dashboard",
   dateLabel = "",
@@ -174,6 +176,7 @@ export function ClinicalDashboard({
 }: ClinicalDashboardProps) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [settingsExpanded, setSettingsExpanded] = useState(activeNav === "settings");
   const [supportMessage, setSupportMessage] = useState("");
   const helpRef = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -198,6 +201,9 @@ export function ClinicalDashboard({
     const menu = helpOpen ? helpRef.current : accountOpen ? accountRef.current : null;
     menu?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
   }, [helpOpen, accountOpen]);
+  useEffect(() => {
+    if (activeNav === "settings") setSettingsExpanded(true);
+  }, [activeNav]);
   function unavailable(label: string) {
     setSupportMessage(`${label} has not been configured for this clinic. Ask an organization administrator to configure it in Settings.`);
   }
@@ -219,7 +225,7 @@ export function ClinicalDashboard({
         >
           DHMIS
           <span className="text-[var(--ink-faint)]">·</span>
-          <span className="text-[var(--ink-muted)]">{locationName}</span>
+          <span className="text-[var(--ink-muted)]">{organizationName}</span>
           <ChevronDown size={14} className="text-[var(--ink-faint)]" aria-hidden="true" />
         </button>
 
@@ -280,19 +286,22 @@ export function ClinicalDashboard({
                       <button
                         type="button"
                         aria-current={active ? "page" : undefined}
-                        onClick={() => onNavigate?.(key)}
-                        className={
+                        aria-expanded={key === "settings" ? settingsExpanded : undefined}
+                        aria-controls={key === "settings" ? "tenant-settings-subnav" : undefined}
+                        onClick={() => key === "settings" ? setSettingsExpanded((current) => !current) : onNavigate?.(key)}
+                        className={`staff-settings-toggle ${
                           "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors " +
                           (active
                             ? "bg-[var(--sage-tint)] font-medium text-[var(--sage-deep)]"
                             : "text-[var(--ink-muted)] hover:bg-[var(--paper)]")
-                        }
+                        }`}
                       >
                         <Icon size={16} aria-hidden="true" />
-                        {label}
+                        <span>{label}</span>
+                        {key === "settings" && <ChevronDown size={14} className={`staff-settings-caret ${settingsExpanded ? "is-expanded" : ""}`} aria-hidden="true" />}
                       </button>
-                      {key === "settings" && activeNav === "settings" && (
-                        <ul className="ml-5 mt-1 border-l border-[var(--border)] pl-2">
+                      {key === "settings" && settingsExpanded && (
+                        <ul id="tenant-settings-subnav" className="staff-settings-subnav ml-5 mt-1 border-l border-[var(--border)] pl-2">
                           {([
                             ["practice", "Practice policy"],
                             ["integrations", "Integrations"],

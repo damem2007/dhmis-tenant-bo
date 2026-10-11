@@ -13,7 +13,7 @@ type Challenge = {
 type Enrollment = { secret: string; qr: string };
 type AuthView =
   | { type: "login" }
-  | { type: "invite" }
+  | { type: "invite"; token?: string }
   | { type: "mfa"; challenge: Challenge; enrollment?: Enrollment };
 
 export function Auth({
@@ -23,7 +23,12 @@ export function Auth({
   tenant: TenantContext;
   onAuthenticated: () => Promise<void>;
 }) {
-  const [view, setView] = useState<AuthView>({ type: "login" });
+  const [view, setView] = useState<AuthView>(() => ({
+    type: new URLSearchParams(window.location.search).has("invite") ? "invite" : "login",
+    ...(new URLSearchParams(window.location.search).get("invite")
+      ? { token: new URLSearchParams(window.location.search).get("invite") || undefined }
+      : {}),
+  }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -90,9 +95,13 @@ export function Auth({
     await run(async () => {
       await api("/auth/invites/accept", {
         tenant_slug: tenant.slug,
-        token: form.get("token"),
+        token: view.type === "invite" && view.token ? view.token : form.get("token"),
+        email: form.get("email"),
         password: form.get("password"),
       });
+      const url = new URL(window.location.href);
+      url.searchParams.delete("invite");
+      window.history.replaceState({}, "", url.pathname + url.search);
       setView({ type: "login" });
     });
   }
@@ -155,9 +164,12 @@ export function Auth({
         <form className="staff-auth-form" onSubmit={handleInvite}>
           <h2 className="staff-auth-heading">Accept invitation</h2>
           <p className="staff-auth-copy">Invitation for {tenant.name}</p>
-          <Field label="Invitation token">
-            <input className="staff-auth-field" name="token" required />
+          <Field label="Your invited email">
+            <input className="staff-auth-field" name="email" type="email" autoComplete="email" required />
           </Field>
+          {!view.token && <Field label="Invitation token">
+            <input className="staff-auth-field" name="token" required />
+          </Field>}
           <Field label="Choose password">
             <input
               className="staff-auth-field"
