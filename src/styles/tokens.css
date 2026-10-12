@@ -71,6 +71,13 @@
 
   --accent-glow: rgba(14, 169, 104, 0.12); /* subtle hero backdrop, used once, sparingly */
 
+  /* Secondary aliases used by the shared Roles & access surface. */
+  --paper-subtle: var(--sf2);
+  --info-soft: var(--in2);
+  --info: var(--in);
+  --danger-soft: var(--er2);
+  --warning: var(--wn);
+
   /* Typography */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -121,4 +128,10 @@
   --success-tint: var(--ac2);
 
   --accent-glow: rgba(52, 211, 143, 0.16);
+
+  --paper-subtle: var(--sf2);
+  --info-soft: var(--in2);
+  --info: var(--in);
+  --danger-soft: var(--er2);
+  --warning: var(--wn);
 }

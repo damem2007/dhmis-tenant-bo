@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../../shared/api';
+import { api } from './lib/api';
 
 export type LocationSuggestion = {
   place_id: string;

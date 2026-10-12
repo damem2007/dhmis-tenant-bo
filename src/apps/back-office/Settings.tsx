@@ -1,12 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, download } from '../../shared/api';
-import { Field, Title } from '../../shared/Fields';
-import { RolesAccess } from '../../shared/RolesAccess';
-import type { Audit, Reference, User } from '../../shared/types';
+import { api, download } from './lib/api';
+import { Field, Title } from './components/Fields';
+import { RolesAccess } from './components/RolesAccess';
+import { NotificationCenter } from './NotificationCenter';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
+import type { Audit, Reference, User } from './types';
 
 interface SettingsData {
   visibility: 'organization' | 'location';
   branding: Record<string, string>;
+  logo_url: string;
   policy: {
     cancellation_notice_hours: number;
     cancellation_fee_cents: number;
@@ -32,8 +35,11 @@ interface Staff {
   name: string;
   email: string;
   role: string;
+  is_provider?: boolean;
   mfa_enabled: boolean;
   active: boolean;
+  suspended_until?: string | null;
+  archived_at?: string | null;
   location_ids: string[];
   photo_url?: string;
   external_identity?: boolean;
@@ -51,16 +57,6 @@ interface Invitation {
   expires: number;
   created_at: string;
   assignments: AccessAssignment[];
-}
-
-interface PatientInvitation {
-  id: string;
-  patient_id: string;
-  recipient_name: string;
-  email: string;
-  created_at: string;
-  expires: number;
-  status: string;
 }
 
 interface AccessAssignment {
@@ -110,14 +106,6 @@ interface CommunicationTemplate {
   active: boolean;
 }
 
-interface Message {
-  id: string;
-  kind: string;
-  status: string;
-  attempts: number;
-  created_at: string;
-}
-
 interface ProviderOptions {
   effective: Record<string, string>;
   available: Record<string, string[]>;
@@ -139,10 +127,12 @@ type Props = {
   reference: Reference;
   audit: Audit[];
   patients: { id: string; first_name: string; last_name: string }[];
+  refresh: () => Promise<void>;
   run: (action: () => Promise<void>) => Promise<void>;
   busy: boolean;
   refreshAudit: (patientId?: string) => Promise<void>;
   basePath: string;
+  activeSection?: SettingsSection;
   onSectionChange?: (section: SettingsSection) => void;
 };
 
@@ -155,7 +145,6 @@ type SettingsView =
       staff: Staff[];
       invitations: Invitation[];
       templates: Record<string, CommunicationTemplate>;
-      messages: Message[];
       providerOptions: ProviderOptions;
       integrationRequests: IntegrationRequest[];
       roles: RoleOption[];
@@ -165,9 +154,9 @@ type SettingsView =
 const brandTokens = ['--sage', '--sage-deep', '--paper', '--surface', '--ink'];
 const emptyAccessFilters: AccessFilters = { search: '', status: '', role: '', location_id: '' };
 const emptyAuditFilters: AuditFilters = { patient_id: '', actor_id: '', start: '', end: '', action: '', resource: '', location_id: '', outcome: '' };
-const settingsSections = ['practice', 'integrations', 'staff', 'templates', 'audit', 'roles', 'delivery'] as const;
+const settingsSections = ['practice', 'integrations', 'staff', 'templates', 'audit', 'roles', 'notifications'] as const;
 export type SettingsSection = (typeof settingsSections)[number];
-const settingsSectionTitles: Record<SettingsSection, string> = { practice: 'Practice policy', integrations: 'Integrations', staff: 'Staff & invitations', templates: 'Message templates', audit: 'Audit trail', roles: 'Roles & access', delivery: 'Notification delivery' };
+const settingsSectionTitles: Record<SettingsSection, string> = { practice: 'Practice policy', integrations: 'Integrations', staff: 'Staff & invitations', templates: 'Message templates', audit: 'Audit trail', roles: 'Roles & access', notifications: 'Notifications' };
 const templateVariables = ['clinic_name', 'clinic_phone', 'patient_first_name', 'provider_name', 'appointment_date', 'appointment_time', 'installment_amount', 'due_date', 'plan_balance', 'recipient_name', 'role', 'tenant_slug', 'platform_name', 'invitation_expires_at', 'invitation_expires_in', 'invitation_link', 'reset_link'] as const;
 const templateSamples: Record<(typeof templateVariables)[number], string> = {
   clinic_name: 'Harbour Dental', clinic_phone: '(604) 555-0182', patient_first_name: 'Avery', provider_name: 'Dr. Jordan Lee', appointment_date: 'October 24', appointment_time: '1:00 PM', installment_amount: '$60.00', due_date: 'September 30', plan_balance: '$120.00', recipient_name: 'Dami', role: 'super admin', tenant_slug: 'smile', platform_name: 'DHMIS Platform', invitation_expires_at: 'October 10, 2026 at 10:00 AM UTC', invitation_expires_in: '24 hours', invitation_link: 'https://admin.smile.dhmis.local:5175/?invite=example-token', reset_link: 'https://admin.smile.dhmis.local:5175/?reset=example-token',
@@ -234,45 +223,13 @@ function TemplateEditor({ templateKey, template, busy, onSave, onTest }: {
   );
 }
 
-function PatientInvitations() {
-  const [page, setPage] = useState<Page<PatientInvitation>>({ page: 1, page_size: 25, total: 0, items: [] });
-  const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  async function load(nextPage = 1) {
-    setBusy(true);
-    try {
-      const query = new URLSearchParams({ page: String(nextPage), page_size: String(page.page_size) });
-      if (search) query.set('search', search);
-      if (status) query.set('status', status);
-      setPage(await api<Page<PatientInvitation>>(`/portal/invites/query?${query}`));
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : 'Patient invitations could not be loaded');
-    } finally { setBusy(false); }
-  }
-  useEffect(() => { void load(); }, []);
-  async function action(identifier: string, operation: 'resend' | 'revoke') {
-    setBusy(true);
-    try {
-      const result = await api<{ token?: string }>(`/portal/invites/${identifier}/${operation}`, {});
-      setMessage(result.token ? `Replacement one-time token: ${result.token}` : 'Invitation revoked.');
-      await load(page.page);
-    } catch (reason) {
-      setMessage(reason instanceof Error ? reason.message : 'Invitation update failed');
-      setBusy(false);
-    }
-  }
-  return <div className="mt-6 border-t border-[var(--border)] pt-5"><div className="prototype-section-head"><div><h3 className="font-medium">Patient invitations</h3><p>Client Portal invitations issued by this organization.</p></div></div>{message && <p className="prototype-callout" role="status">{message}</p>}<form className="mb-3 grid gap-2 md:grid-cols-3" onSubmit={(event) => { event.preventDefault(); void load(); }}><Field label="Find patient invitation"><input className="field" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name or email" /></Field><Field label="Status"><select className="field" value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All</option><option value="pending">Pending</option><option value="accepted">Accepted</option><option value="expired">Expired</option></select></Field><button className="btn-secondary self-end" disabled={busy}>Apply filters</button></form><div className="overflow-auto"><table><thead><tr><th>Patient</th><th>Recipient</th><th>Created</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{page.items.map((invitation) => <tr key={invitation.id}><td><strong>{invitation.recipient_name}</strong><p className="muted text-xs">{invitation.patient_id}</p></td><td>{invitation.email}</td><td>{new Date(invitation.created_at).toLocaleString()}</td><td>{new Date(invitation.expires * 1000).toLocaleString()}</td><td>{invitation.status}</td><td>{['pending', 'expired'].includes(invitation.status) && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void action(invitation.id, 'resend')}>Resend</button>} {invitation.status === 'pending' && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void action(invitation.id, 'revoke')}>Revoke</button>}</td></tr>)}</tbody></table>{!page.items.length && <p className="muted p-4">No patient invitations match these filters.</p>}</div><AccessPager page={page} busy={busy} label="patient invitations" onPage={(next) => void load(next)} onPageSize={(size) => { setPage((current) => ({ ...current, page_size: size })); void load(1); }} /></div>;
-}
-
-export function Settings({ user, reference, audit, patients, run, busy, refreshAudit, basePath, onSectionChange }: Props) {
+export function Settings({ user, reference, audit, patients, refresh, run, busy, refreshAudit, basePath, activeSection: requestedSection, onSectionChange }: Props) {
   const [view, setView] = useState<SettingsView>({ type: 'loading' });
   const [auditPage, setAuditPage] = useState({ page: 1, page_size: 25, total: audit.length, items: audit });
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
   const [staffPage, setStaffPage] = useState<Page<Staff>>({ page: 1, page_size: 25, total: 0, items: [] });
   const [invitationPage, setInvitationPage] = useState<Page<Invitation>>({ page: 1, page_size: 25, total: 0, items: [] });
-  const [staffFilters, setStaffFilters] = useState<AccessFilters>(emptyAccessFilters);
+  const [staffFilters, setStaffFilters] = useState<AccessFilters>(() => ({ ...emptyAccessFilters, role: new URLSearchParams(window.location.search).get('role') || '' }));
   const [invitationFilters, setInvitationFilters] = useState<AccessFilters>(emptyAccessFilters);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('appointment-reminder');
   const [activeSection, setActiveSection] = useState<SettingsSection>(() => {
@@ -289,19 +246,18 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
   }
 
   async function load(invitationLink = view.type === 'ready' ? view.invitationLink : '') {
-    const [settings, staffAccess, invitationAccess, templates, messages, providerOptions, integrationRequests, roles] = await Promise.all([
+    const [settings, staffAccess, invitationAccess, templates, providerOptions, integrationRequests, roles] = await Promise.all([
       api<SettingsData>('/organization/settings'),
       api<Page<Staff>>(accessQuery('staff', staffPage.page, staffPage.page_size, staffFilters)),
       api<Page<Invitation>>(accessQuery('invitation', invitationPage.page, invitationPage.page_size, invitationFilters)),
       api<Record<string, CommunicationTemplate>>('/organization/communication-templates'),
-      api<Message[]>('/notifications'),
       api<ProviderOptions>('/organization/provider-options'),
       api<IntegrationRequest[]>('/organization/integration-requests'),
       api<RoleOption[]>('/organization/access/roles'),
     ]);
     setStaffPage(staffAccess);
     setInvitationPage(invitationAccess);
-    setView({ type: 'ready', settings, staff: staffAccess.items, invitations: invitationAccess.items, templates, messages, providerOptions, integrationRequests, roles, invitationLink });
+    setView({ type: 'ready', settings, staff: staffAccess.items, invitations: invitationAccess.items, templates, providerOptions, integrationRequests, roles, invitationLink });
   }
 
   async function loadAccess(kind: 'staff' | 'invitation', page: number, pageSize: number, filters: AccessFilters) {
@@ -352,6 +308,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
       const result = await api<{ invitation_link: string }>('/organization/invites', {
         name: form.get('name'),
         email: form.get('email'),
+        is_provider: form.get('is_provider') === 'on',
         assignments,
       });
       await load(result.invitation_link);
@@ -372,30 +329,17 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
     });
   }
 
-  async function updateStaff(person: Staff, change: { active?: boolean; assignments?: AccessAssignment[] }) {
+  async function updateStaff(person: Staff, change: { active?: boolean; is_provider?: boolean; assignments?: AccessAssignment[] }) {
     await run(async () => {
       await api(
         `/organization/staff/${person.id}`,
         {
           active: change.active ?? person.active,
+          is_provider: change.is_provider ?? Boolean(person.is_provider),
           assignments: change.assignments ?? person.assignments,
         },
         'PUT',
       );
-      await load();
-    });
-  }
-
-  async function dispatchNotifications() {
-    await run(async () => {
-      await api('/notifications/dispatch', {});
-      await load();
-    });
-  }
-
-  async function retryNotification(identifier: string) {
-    await run(async () => {
-      await api(`/notifications/${identifier}/retry`, {});
       await load();
     });
   }
@@ -419,6 +363,13 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
       await api(`/organization/staff/${person.id}/password-reset`, {
         reason: `Organization administrator reset requested for ${person.email}`,
       });
+      await load();
+    });
+  }
+
+  async function manageStaff(person: Staff, action: 'suspend' | 'disable' | 'archive' | 'restore', hours?: number) {
+    await run(async () => {
+      await api(`/organization/staff/${person.id}/${action}`, action === 'suspend' ? { hours } : {});
       await load();
     });
   }
@@ -459,6 +410,10 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
 
   useEffect(() => {
     const restoreSection = () => {
+      if (window.location.pathname === `${basePath.replace(/\/settings$/, '')}/staff`) {
+        setActiveSection('staff');
+        return;
+      }
       const section = window.location.pathname.startsWith(basePath) ? window.location.pathname.slice(basePath.length).split('/').filter(Boolean)[0] : '';
       setActiveSection(settingsSections.includes(section as SettingsSection) ? section as SettingsSection : 'practice');
     };
@@ -467,6 +422,10 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
     return () => window.removeEventListener('popstate', restoreSection);
   }, [basePath]);
 
+  useEffect(() => {
+    if (requestedSection && requestedSection !== activeSection) setActiveSection(requestedSection);
+  }, [requestedSection, activeSection]);
+
   function openSettingsSection(section: SettingsSection) {
     const target = `${basePath}/${section}`;
     if (window.location.pathname !== target) window.history.pushState({}, '', target);
@@ -474,25 +433,21 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
     onSectionChange?.(section);
   }
 
-  if (view.type === 'loading') return <p className="panel">Loading settings…</p>;
+  if (view.type === 'loading') return <WorkspaceLoadingOverlay label="Loading settings" />;
   if (view.type === 'error') return <p className="panel" role="alert">{view.message}</p>;
 
-  const { settings, staff, invitations, templates, messages, providerOptions, integrationRequests, roles, invitationLink } = view;
+  const { settings, staff, invitations, templates, providerOptions, integrationRequests, roles, invitationLink } = view;
   const organizationRoles = roles.filter((role) => role.scopes.includes('organization'));
   const locationRoles = roles.filter((role) => role.scopes.includes('location'));
   const effectiveTemplateKey = templates[selectedTemplateKey] ? selectedTemplateKey : Object.keys(templates)[0];
 
   return (
     <>
-      <Title
+      {activeSection !== 'roles' && activeSection !== 'notifications' && <Title
         title={settingsSectionTitles[activeSection]}
         description="Configure tenant-owned policy, staff access, communications, provider requests, and auditable operations."
-      />
-      <nav className="panel mb-5 flex flex-wrap gap-2 text-sm" aria-label="Settings sections">
-        {settingsSections.map((section) => <a key={section} aria-current={activeSection === section ? 'page' : undefined} className={`btn-secondary ${activeSection === section ? 'border-[var(--sage)] text-[var(--sage-deep)]' : ''}`} href={`${basePath}/${section}`} onClick={(event) => { event.preventDefault(); openSettingsSection(section); }}>{settingsSectionTitles[section]}</a>)}
-      </nav>
+      />}
       {activeSection === 'practice' && <form id="settings-practice" className="panel mb-5 space-y-4" onSubmit={handleSaveSettings}>
-        <h2 className="font-semibold">Practice policy</h2>
         <div className="grid gap-3 md:grid-cols-5">
           <Field label="Patient visibility">
             <select
@@ -533,6 +488,16 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
             ))}
           </div>
         </details>
+        <Field label="Public logo URL">
+          <input
+            className="field"
+            type="text"
+            value={settings.logo_url}
+            placeholder="Use the bundled DHMIS logo"
+            onChange={(event) => updateSettings((draft) => { draft.logo_url = event.target.value; })}
+          />
+          <span className="muted text-xs">Enter an HTTP(S) URL or tenant asset path. This logo is used by the public clinic site and patient portal; leave it blank to use the bundled fallback.</span>
+        </Field>
         <details>
           <summary className="font-medium">Public contact and booking widget</summary>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
@@ -571,7 +536,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
         {integrationRequests.length > 0 && <div className="mt-4 overflow-auto"><table><thead><tr><th>Requested</th><th>Capability</th><th>Provider</th><th>Status</th><th>Decision</th></tr></thead><tbody>{integrationRequests.map((request) => <tr key={request.id}><td>{new Date(request.created_at).toLocaleDateString()}</td><td>{request.capability}</td><td>{request.provider_name}</td><td>{request.status}</td><td>{request.decision_reason || '—'}</td></tr>)}</tbody></table></div>}
       </section>}
 
-      {(activeSection === 'staff' || activeSection === 'delivery') && <div className="grid gap-5">
+      {activeSection === 'staff' && <div className="grid gap-5">
         {activeSection === 'staff' && <section id="settings-access" className="panel">
           <h2 className="mb-3 font-semibold">Staff access</h2>
           <form className="space-y-3" onSubmit={handleInvite}>
@@ -581,6 +546,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
               <fieldset className="space-y-2 md:col-span-2">
                 <legend className="text-sm font-medium">Role assignments</legend>
                 <p className="muted text-xs">Choose one effective role for each location. Roles are evaluated for the active location and are never combined.</p>
+                <p className="prototype-callout text-xs"><strong>Scope guide:</strong> a location assignment applies only to that clinic. Organization-wide access applies across every clinic location. The role’s permissions and allowed scope are configured in Settings → Roles &amp; access; choose the matching assignment here when inviting or updating staff.</p>
                 {reference.locations.map((location) => (
                   <div key={location.id} className="grid items-center gap-2 sm:grid-cols-[1fr_1fr]">
                     <label className="text-sm"><input name="assignment_location" type="checkbox" value={location.id} /> {location.name}</label>
@@ -596,6 +562,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
                   </select>
                 </div>
               </fieldset>
+              <label className="flex items-center gap-2 text-sm md:col-span-2"><input name="is_provider" type="checkbox" /> Patient-facing provider (appears in booking and care-team lists)</label>
             </div>
             <button className="btn-secondary" disabled={busy}>Create invitation</button>
             {invitationLink && <p className="mt-2 break-all text-sm"><strong>Invitation link:</strong> <a className="underline" href={invitationLink}>{invitationLink}</a></p>}
@@ -608,14 +575,14 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
             void loadAccess('staff', 1, staffPage.page_size, filters);
           }}>
             <Field label="Find staff"><input className="field" name="search" defaultValue={staffFilters.search} placeholder="Name or email" /></Field>
-            <Field label="Status"><select className="field" name="status" defaultValue={staffFilters.status}><option value="">All</option><option value="active">Active</option><option value="inactive">Inactive</option></select></Field>
+            <Field label="Status"><select className="field" name="status" defaultValue={staffFilters.status}><option value="">All</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="inactive">Disabled</option><option value="archived">Archived</option></select></Field>
             <Field label="Role"><select className="field" name="role" defaultValue={staffFilters.role}><option value="">All</option>{roles.map((role) => <option key={role.id} value={role.name}>{role.name}</option>)}</select></Field>
             <Field label="Location"><select className="field" name="location_id" defaultValue={staffFilters.location_id}><option value="">All</option>{reference.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></Field>
             <button className="btn-secondary md:col-span-4" disabled={busy}>Apply staff filters</button>
           </form>
           <div className="mt-5 overflow-auto">
             <table>
-              <thead><tr><th>Staff</th><th>Effective roles / MFA</th><th>Active</th></tr></thead>
+              <thead><tr><th>Staff</th><th>Effective roles / MFA</th><th>Provider</th><th>Active</th></tr></thead>
               <tbody>
                 {staff.map((person) => (
                   <tr key={person.id}>
@@ -643,8 +610,23 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
                       {person.external_identity && <span className="ml-2 text-xs">External identity</span>}
                     </td>
                     <td>
-                      <input aria-label={`${person.name} active`} type="checkbox" checked={person.active} disabled={person.id === user.id} onChange={(event) => void updateStaff(person, { active: event.target.checked })} />
-                      {person.id !== user.id && !person.external_identity && <button type="button" className="btn-secondary ml-2" disabled={busy} onClick={() => void resetPassword(person)}>Reset password</button>}
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(person.is_provider)}
+                          disabled={busy || Boolean(person.archived_at)}
+                          onChange={(event) => void updateStaff(person, { is_provider: event.target.checked })}
+                        />
+                        Patient-facing
+                      </label>
+                    </td>
+                    <td>
+                      <p className="mb-2 text-xs">{person.archived_at ? 'Archived' : person.suspended_until && new Date(person.suspended_until) > new Date() ? `Suspended until ${new Date(person.suspended_until).toLocaleDateString()}` : person.active ? 'Active' : 'Disabled'}</p>
+                      {person.id !== user.id && !person.archived_at && <div className="flex flex-wrap gap-2">
+                        {person.active ? <><button type="button" className="btn-secondary" disabled={busy} onClick={() => void manageStaff(person, 'disable')}>Disable</button><select className="field w-auto" aria-label={`Suspend ${person.name}`} defaultValue="24"><option value="24">Suspend 24 hours</option><option value="168">Suspend 7 days</option><option value="720">Suspend 30 days</option></select><button type="button" className="btn-secondary" disabled={busy} onClick={(event) => { const select = event.currentTarget.previousElementSibling as HTMLSelectElement | null; void manageStaff(person, 'suspend', Number(select?.value || 24)); }}>Suspend</button></> : <><button type="button" className="btn-secondary" disabled={busy} onClick={() => void updateStaff(person, { active: true })}>Enable</button><button type="button" className="btn-secondary" disabled={busy} onClick={() => void manageStaff(person, 'archive')}>Archive</button></>}
+                        {!person.external_identity && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void resetPassword(person)}>Reset password</button>}
+                      </div>}
+                      {person.id !== user.id && person.archived_at && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void manageStaff(person, 'restore')}>Restore</button>}
                     </td>
                   </tr>
                 ))}
@@ -668,32 +650,8 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
           </form>
           <div className="overflow-auto"><table><thead><tr><th>Invitee</th><th>Role assignments</th><th>Status</th><th>Actions</th></tr></thead><tbody>{invitations.map((invitation) => <tr key={invitation.id}><td>{invitation.name}<p className="muted text-xs">{invitation.email}</p></td><td>{invitation.assignments.map((assignment) => <p key={assignment.id || `${assignment.scope}:${assignment.location_id}`} className="text-xs"><strong>{assignment.role}</strong> · {assignment.scope === 'organization' ? 'Organization-wide' : reference.locations.find((location) => location.id === assignment.location_id)?.name || 'Location'}</p>)}</td><td>{invitation.status} · sent {invitation.resend_count + 1} time(s)</td><td>{['pending', 'expired'].includes(invitation.status) && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void resendInvitation(invitation.id)}>Resend</button>} {invitation.status === 'pending' && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void revokeInvitation(invitation.id)}>Revoke</button>}</td></tr>)}</tbody></table></div>
           <AccessPager page={invitationPage} busy={busy} label="invitations" onPage={(page) => void loadAccess('invitation', page, invitationPage.page_size, invitationFilters)} onPageSize={(pageSize) => void loadAccess('invitation', 1, pageSize, invitationFilters)} />
-          <PatientInvitations />
         </section>}
 
-        {activeSection === 'delivery' && <section id="settings-delivery" className="panel">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Notification delivery</h2>
-            <button className="btn-secondary" disabled={busy} onClick={() => void dispatchNotifications()}>Run due jobs</button>
-          </div>
-          <table>
-            <thead><tr><th>Created</th><th>Type</th><th>Status</th></tr></thead>
-            <tbody>
-              {messages.slice(0, 30).map((message) => (
-                <tr key={message.id}>
-                  <td>{new Date(message.created_at).toLocaleString()}</td>
-                  <td>{message.kind}</td>
-                  <td>
-                    {message.status} · {message.attempts} attempts{' '}
-                    {['failed', 'retry'].includes(message.status) && (
-                      <button className="btn-secondary ml-2" onClick={() => void retryNotification(message.id)}>Retry</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>}
       </div>}
 
       {activeSection === 'templates' && <section id="settings-templates" className="panel">
@@ -706,7 +664,7 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
       </section>}
 
       {activeSection === 'audit' && <section id="settings-audit" className="panel">
-        <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-semibold">Audit trail</h2><p className="muted text-sm">Filter the immutable log. CSV export uses the same active filters.</p></div>{user.permissions.includes('audit_export') && <button type="button" className="btn-secondary" onClick={() => void exportAudit()}>Export filtered CSV</button>}</div>
+        <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="muted text-sm">Filter the immutable log. CSV export uses the same active filters.</p></div>{user.permissions.includes('audit_export') && <button type="button" className="btn-secondary" onClick={() => void exportAudit()}>Export filtered CSV</button>}</div>
         <form className="mt-3 grid gap-2 md:grid-cols-4" onSubmit={(event) => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
@@ -741,7 +699,8 @@ export function Settings({ user, reference, audit, patients, run, busy, refreshA
         <AccessPager page={auditPage} busy={busy} label="events" onPage={(page) => void loadAudit(page)} onPageSize={(pageSize) => void loadAudit(1, auditFilters, pageSize)} />
       </section>}
 
-      {activeSection === 'roles' && <RolesAccess domain="tenant" />}
+      {activeSection === 'roles' && <RolesAccess domain="tenant" staffHref={`${basePath}/staff`} />}
+      {activeSection === 'notifications' && <NotificationCenter basePath={basePath} approvalsHref={`${basePath}/roles?tab=approvals`} />}
     </>
   );
 }

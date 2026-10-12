@@ -3,6 +3,7 @@
 interface ImportMetaEnv {
   readonly VITE_DEFAULT_TENANT_SLUG?: string;
   readonly VITE_APP_ENVIRONMENT?: 'development' | 'sandbox' | 'test' | 'production';
+  readonly VITE_TENANT_WEB_ORIGIN?: string;
   readonly VITE_SUPPORT_URL?: string;
 }
 

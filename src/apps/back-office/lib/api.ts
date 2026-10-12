@@ -1,10 +1,29 @@
-let accessToken = "";
+const TOKEN_STORAGE_KEY = "dhmis.staff.access_token";
+
+function readStoredToken() {
+  try {
+    return window.sessionStorage.getItem(TOKEN_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+let accessToken = typeof window === "undefined" ? "" : readStoredToken();
 let tenantSlug = "";
 let activeLocationId = "";
 const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const inFlightMutations = new Map<string, Promise<unknown>>();
 export function setToken(value: string) {
   accessToken = value;
+  try {
+    if (value) window.sessionStorage.setItem(TOKEN_STORAGE_KEY, value);
+    else window.sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    // Session storage can be unavailable in privacy-restricted browser contexts.
+  }
+}
+export function hasToken() {
+  return Boolean(accessToken);
 }
 export function setTenantSlug(value: string) {
   tenantSlug = value;

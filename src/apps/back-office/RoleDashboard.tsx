@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { api, download, money } from '../../shared/api';
-import type { Reference, User } from '../../shared/types';
+import { api, download, money } from './lib/api';
+import type { Reference, User } from './types';
 import type { ScheduleItem } from './ClinicalDashboard';
-import type { ApprovalNotificationFeed } from '../../shared/ApprovalBell';
+import type { ApprovalNotificationFeed } from './components/ApprovalBell';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type Metric = {
   key: string; label: string; definition: string; unit: string; value: number | null;
@@ -131,7 +132,7 @@ export function RoleDashboard({ user, reference, schedule = [], approvalsHref }:
 
   useEffect(() => { void load(); }, [period, locationId, providerId]);
 
-  if (!dashboard && busy) return <p className="panel">Loading role dashboard…</p>;
+  if (!dashboard && busy) return <WorkspaceLoadingOverlay label="Loading role dashboard" />;
   return <div className="role-dashboard">
     <div className="mb-4 flex flex-wrap items-start justify-between gap-4">
       <div>{organizationView ? <><h1 className="text-2xl font-bold">{user.organization_name}</h1><p className="muted">{reference.locations.length} location{reference.locations.length === 1 ? '' : 's'} · {reference.providers.length} clinical provider{reference.providers.length === 1 ? '' : 's'}</p></> : <><h1 className="text-2xl font-bold">Good morning, {user.name}</h1><p className="muted">{new Intl.DateTimeFormat('en-CA', { dateStyle: 'full' }).format(new Date())}</p></>}</div>

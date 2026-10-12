@@ -3,7 +3,9 @@ import {
   Home,
   Calendar,
   Users,
+  Mail,
   FileText,
+  Wallet,
   HeartPulse,
   ShieldCheck,
   BarChart3,
@@ -12,6 +14,8 @@ import {
   Globe2,
   Search,
   ChevronDown,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   ArrowUpRight,
   ArrowDownRight,
@@ -22,12 +26,11 @@ import {
 import {
   clinicAdministratorDestination,
   guidesDestination,
-  isSandboxEnvironment,
   supportDestination,
   supportEmail,
-} from "../../shared/environment";
-import { ApprovalBell } from "../../shared/ApprovalBell";
-import { nameInitials } from "../../shared/LogoMark";
+} from "./lib/environment";
+import { ApprovalBell, type ApprovalNotification } from "./components/ApprovalBell";
+import { nameInitials } from "./components/LogoMark";
 import type { NavKey, TenantSettingsSection } from "./navigation";
 export type { NavKey, TenantSettingsSection } from "./navigation";
 
@@ -94,6 +97,13 @@ export interface ClinicalDashboardProps {
   onAccountSection?: (section: "profile" | "password" | "security") => void;
   onSignOut?: () => void;
   approvalsHref?: string;
+  onOpenNotification?: (item: ApprovalNotification) => void;
+  frontOfficeHref?: string;
+  patientPortalHref?: string;
+  dark?: boolean;
+  onToggleTheme?: () => void;
+  refreshBusy?: boolean;
+  onRefresh?: () => void;
 }
 
 interface NavGroup {
@@ -108,6 +118,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "schedule", label: "Schedule", icon: Calendar },
       { key: "patients", label: "Patients", icon: Users },
+      { key: "patient-invitations", label: "Patient invitations", icon: Mail },
       { key: "care", label: "Care workflows", icon: HeartPulse },
     ],
   },
@@ -123,7 +134,9 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Admin",
     items: [
       { key: "operations", label: "Operations", icon: Building2 },
+      { key: "staff", label: "Staff & users", icon: Users },
       { key: "site", label: "Site editor", icon: Globe2 },
+      { key: "services", label: "Services & fees", icon: Wallet },
       { key: "settings", label: "Settings", icon: Settings },
     ],
   },
@@ -132,12 +145,15 @@ const NAV_GROUPS: NavGroup[] = [
 const NAV_PERMISSION: Partial<Record<NavKey, string>> = {
   schedule: "scheduling",
   patients: "patients",
+  "patient-invitations": "patients",
   care: "clinical",
   billing: "billing",
   claims: "claims",
   reports: "reporting",
   operations: "operations",
+  staff: "settings",
   site: "settings",
+  services: "billing",
   settings: "settings",
 };
 
@@ -173,9 +189,17 @@ export function ClinicalDashboard({
   onAccountSection,
   onSignOut,
   approvalsHref = "/admin/settings/roles?tab=approvals",
+  onOpenNotification,
+  frontOfficeHref,
+  patientPortalHref,
+  dark = false,
+  onToggleTheme,
+  refreshBusy = false,
+  onRefresh,
 }: ClinicalDashboardProps) {
   const [helpOpen, setHelpOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsExpanded, setSettingsExpanded] = useState(activeNav === "settings");
   const [supportMessage, setSupportMessage] = useState("");
   const helpRef = useRef<HTMLDivElement>(null);
@@ -215,8 +239,7 @@ export function ClinicalDashboard({
   const initials = nameInitials(providerName);
 
   return (
-    <div className="min-h-screen bg-[var(--paper)] font-[var(--font-ui)] text-[var(--ink)]">
-      {isSandboxEnvironment && <div className="staff-sandbox"><strong>Development sandbox</strong> · Synthetic records · no live payments, claims, or signatures</div>}
+    <div className={`staff-shell min-h-screen bg-[var(--paper)] font-[var(--font-ui)] text-[var(--ink)]${sidebarCollapsed ? " staff-sidebar-collapsed" : ""}`}>
       {/* Top bar */}
       <header className="flex h-14 items-center gap-4 border-b border-[var(--border)] bg-[var(--surface)] px-4">
         <button
@@ -244,11 +267,19 @@ export function ClinicalDashboard({
         </label>
 
         <div className="ml-auto flex items-center gap-3">
+          {(frontOfficeHref || patientPortalHref) && (
+            <div className="hidden items-center gap-3 lg:flex">
+              {frontOfficeHref && <a className="staff-header-link" href={frontOfficeHref} target="_blank" rel="noopener noreferrer">Front Office</a>}
+              {patientPortalHref && <a className="staff-header-link" href={patientPortalHref} target="_blank" rel="noopener noreferrer">Client Portal</a>}
+            </div>
+          )}
+          {onToggleTheme && <button type="button" className="staff-header-action" onClick={onToggleTheme}>{dark ? "Light theme" : "Dark theme"}</button>}
+          {onRefresh && <button type="button" className="staff-header-action" disabled={refreshBusy} onClick={onRefresh}>{refreshBusy ? "Refreshing…" : "Refresh"}</button>}
           <div className="staff-help" ref={helpRef}>
             <button type="button" aria-haspopup="menu" aria-expanded={helpOpen} onClick={() => { setAccountOpen(false); setSupportMessage(""); setHelpOpen((current) => !current); }} className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:bg-[var(--paper)]">? Help</button>
             {helpOpen && <div className="staff-help-menu" role="menu"><strong>Help &amp; support</strong><span>All systems operational</span>{supportItem("Contact DHMIS support", supportDestination)}{supportItem("Email support", supportEmail ? `mailto:${supportEmail}` : "")}{supportItem("Ask my clinic administrator", clinicAdministratorDestination)}{supportItem("Guides & how-tos", guidesDestination)}{supportMessage && <span role="status">{supportMessage}</span>}<small>Do not include patient names or health details in a support request. The page and time may be attached automatically.</small></div>}
           </div>
-          <ApprovalBell domain="tenant" approvalsHref={approvalsHref} />
+          <ApprovalBell domain="tenant" approvalsHref={approvalsHref} onOpenNotification={onOpenNotification} />
           <div className="h-6 w-px bg-[var(--border)]" />
           <div className="staff-help" ref={accountRef}>
           <button
@@ -274,12 +305,15 @@ export function ClinicalDashboard({
 
       <div className="flex">
         {/* Sidebar */}
-        <nav className="hidden w-52 shrink-0 border-r border-[var(--border)] p-3 md:block" aria-label="Primary">
+        <nav className="staff-sidebar hidden w-52 shrink-0 border-r border-[var(--border)] p-3 md:block" aria-label="Primary">
+          <button type="button" className="staff-sidebar-toggle" aria-label={sidebarCollapsed ? "Show navigation" : "Hide navigation"} title={sidebarCollapsed ? "Show navigation" : "Hide navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>
+            {sidebarCollapsed ? <PanelLeftOpen size={17} aria-hidden="true" /> : <PanelLeftClose size={17} aria-hidden="true" />}
+          </button>
           {NAV_GROUPS.map((group) => (
             <div key={group.label} className="mb-4">
               <p className="mb-1.5 px-3 text-xs font-medium text-[var(--ink-faint)]">{group.label}</p>
               <ul className="flex flex-col gap-0.5">
-                {group.items.filter((item) => item.key === "dashboard" || permissions.includes(NAV_PERMISSION[item.key] || item.key)).map(({ key, label, icon: Icon }) => {
+                {group.items.filter((item) => item.key === "dashboard" || permissions.includes(NAV_PERMISSION[item.key] || item.key) || (item.key === "settings" && permissions.includes("messaging"))).map(({ key, label, icon: Icon }) => {
                   const active = key === activeNav;
                   return (
                     <li key={key}>
@@ -297,7 +331,7 @@ export function ClinicalDashboard({
                         }`}
                       >
                         <Icon size={16} aria-hidden="true" />
-                        <span>{label}</span>
+                        <span className="staff-nav-label">{label}</span>
                         {key === "settings" && <ChevronDown size={14} className={`staff-settings-caret ${settingsExpanded ? "is-expanded" : ""}`} aria-hidden="true" />}
                       </button>
                       {key === "settings" && settingsExpanded && (
@@ -309,9 +343,10 @@ export function ClinicalDashboard({
                             ["templates", "Message templates"],
                             ["audit", "Audit trail"],
                             ["roles", "Roles & access"],
+                            ["notifications", "Notifications"],
                           ] as [TenantSettingsSection, string][]).map(([section, sectionLabel]) => (
                             <li key={section}>
-                              <button type="button" aria-current={activeSettingsSection === section ? "page" : undefined} onClick={() => onSettingsSection?.(section)} className={`w-full rounded-r-md px-2 py-1.5 text-left text-xs ${activeSettingsSection === section ? "font-semibold text-[var(--sage-deep)]" : "text-[var(--ink-muted)] hover:bg-[var(--paper)]"}`}>{sectionLabel}</button>
+                              <button type="button" aria-current={activeSettingsSection === section ? "page" : undefined} onClick={() => onSettingsSection?.(section)} className={`staff-nav-label w-full rounded-r-md px-2 py-1.5 text-left text-xs ${activeSettingsSection === section ? "font-semibold text-[var(--sage-deep)]" : "text-[var(--ink-muted)] hover:bg-[var(--paper)]"}`}>{sectionLabel}</button>
                             </li>
                           ))}
                         </ul>

@@ -3,6 +3,7 @@ import { Calendar, ShieldCheck, Users, Wallet } from 'lucide-react';
 import ClinicalDashboard from './ClinicalDashboard';
 import { NAV_PATHS, navFromPath, settingsSectionFromPath, type NavKey, type TenantSettingsSection } from './navigation';
 import { Patients } from './Patients';
+import { PatientInvitations } from './PatientInvitations';
 import { Schedule } from './Schedule';
 import { Billing } from './Billing';
 import { Auth } from './Auth';
@@ -14,10 +15,12 @@ import { RoleDashboard } from './RoleDashboard';
 import { Account } from './Account';
 import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 import { SiteEditor } from './SiteEditor';
+import { ServiceCatalogue } from './ServiceCatalogue';
 import { Phase2Support } from './Phase2Support';
-import { api, money, setActiveLocation, setToken } from '../../shared/api';
-import { isSandboxEnvironment } from '../../shared/environment';
-import type { TenantContext } from '../../shared/tenant';
+import type { ApprovalNotification } from './components/ApprovalBell';
+import { api, hasToken, money, setActiveLocation, setToken } from './lib/api';
+import { isSandboxEnvironment } from './lib/environment';
+import type { TenantContext } from './lib/tenant';
 import type {
   Appointment,
   Audit,
@@ -28,7 +31,7 @@ import type {
   Reference,
   Service,
   User,
-} from '../../shared/types';
+} from './types';
 
 type WorkspaceData = {
   patients: Patient[];
@@ -39,6 +42,14 @@ type WorkspaceData = {
   dashboard: Dashboard;
   reference: Reference;
 };
+
+function tenantWebOrigin() {
+  const configured = (import.meta.env.VITE_TENANT_WEB_ORIGIN || '').trim().replace(/\/$/, '');
+  if (configured) return configured;
+  const url = new URL(window.location.href);
+  const hostname = url.hostname.replace(/^admin\./, '');
+  return `${url.protocol}//${hostname}${url.port ? `:${url.port}` : ''}`;
+}
 
 type UiState = {
   nav: NavKey;
@@ -66,6 +77,7 @@ export default function App({ tenant }: { tenant: TenantContext }) {
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<WorkspaceData | null>(null);
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [sessionRestoring, setSessionRestoring] = useState(() => hasToken());
   const [ui, setUi] = useState<UiState>(() => ({ ...initialUi, nav: navFromPath(tenant.slug), settingsSection: settingsSectionFromPath(tenant.slug) }));
 
   const patchUi = useCallback((next: Partial<UiState>) => {
@@ -108,11 +120,11 @@ export default function App({ tenant }: { tenant: TenantContext }) {
   );
 
   const run = useCallback(
-    async (action: () => Promise<void>) => {
+    async (action: () => Promise<void>, successMessage = 'Saved to the database.') => {
       patchUi({ busy: true, error: '', notice: '' });
       try {
         await action();
-        patchUi({ notice: 'Saved to the database.' });
+        patchUi({ notice: successMessage });
       } catch (reason) {
         patchUi({ error: reason instanceof Error ? reason.message : 'Request failed' });
       } finally {
@@ -131,9 +143,9 @@ export default function App({ tenant }: { tenant: TenantContext }) {
   );
 
   async function handleAuthenticated() {
-    const current = await api<User>('/auth/me');
     setWorkspaceLoading(true);
     try {
+      const current = await api<User>('/auth/me');
       setActiveLocation(current.selected_location_id || '');
       applyBranding(current.branding);
       await refresh(current);
@@ -142,6 +154,25 @@ export default function App({ tenant }: { tenant: TenantContext }) {
       setWorkspaceLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!hasToken()) {
+      setSessionRestoring(false);
+      return;
+    }
+    let active = true;
+    void handleAuthenticated()
+      .catch(() => {
+        setToken('');
+        if (active) setUi((current) => ({ ...current, error: '' }));
+      })
+      .finally(() => {
+        if (active) setSessionRestoring(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [tenant.slug]);
 
   async function handleSignOut() {
     await run(async () => {
@@ -190,6 +221,12 @@ export default function App({ tenant }: { tenant: TenantContext }) {
     navigate('patients');
   }
 
+  function openNotification(item: ApprovalNotification) {
+    if (!item.thread_id) return;
+    navigate('care');
+    window.setTimeout(() => window.dispatchEvent(new CustomEvent('dhmis:open-message', { detail: { threadId: item.thread_id } })), 0);
+  }
+
   useEffect(() => {
     const unauthorized = () => {
       logout();
@@ -215,13 +252,14 @@ export default function App({ tenant }: { tenant: TenantContext }) {
     }
   }, [ui.nav, user, refreshAudit, patchUi]);
 
-  if (!user) return <><Auth tenant={tenant} onAuthenticated={handleAuthenticated} />{workspaceLoading && <WorkspaceLoadingOverlay />}</>;
+  if (!user) return <>{!sessionRestoring && <Auth tenant={tenant} onAuthenticated={handleAuthenticated} />}{(sessionRestoring || workspaceLoading) && <WorkspaceLoadingOverlay />}</>;
   if (!data) return <WorkspaceLoadingOverlay />;
   const currentUser = user;
   const workspace = data;
   const assignedLocations = (currentUser.assignments || []).filter((assignment) => assignment.scope === 'location');
+  const tenantWebBase = tenantWebOrigin();
 
-  const shared = {
+  const workspaceProps = {
     ...workspace,
     refresh: () => refresh(),
     run,
@@ -232,35 +270,40 @@ export default function App({ tenant }: { tenant: TenantContext }) {
   function renderWorkspace(): ReactNode {
     switch (ui.nav) {
       case 'patients':
-        return <Patients {...shared} query={ui.query} />;
+        return <Patients {...workspaceProps} query={ui.query} />;
+      case 'patient-invitations':
+        return <PatientInvitations />;
       case 'schedule':
-        return <Schedule {...shared} />;
+        return <Schedule {...workspaceProps} />;
       case 'care':
         return <><Phase3Care patients={workspace.patients} reference={workspace.reference} permissions={currentUser.permissions} run={run} busy={ui.busy} /><Phase2Support patients={workspace.patients} run={run} busy={ui.busy} /></>;
       case 'billing':
-        return <Billing {...shared} claimsOnly={false} />;
+        return <Billing {...workspaceProps} claimsOnly={false} />;
       case 'claims':
-        return <Billing {...shared} claimsOnly />;
+        return <Billing {...workspaceProps} claimsOnly />;
       case 'reports':
         return <Reports reference={workspace.reference} />;
       case 'operations':
         return <Operations reference={workspace.reference} permissions={currentUser.permissions} run={run} busy={ui.busy} refreshReference={() => refresh()} />;
       case 'site':
         return <SiteEditor tenant={tenant} user={currentUser} reference={workspace.reference} />;
+      case 'services':
+        return <ServiceCatalogue services={workspace.services} run={run} refresh={workspaceProps.refresh} />;
       case 'settings':
-        return (
-          <Settings
+      case 'staff':
+        return <Settings
             user={currentUser}
             reference={workspace.reference}
             audit={ui.audit}
             patients={workspace.patients}
+            refresh={workspaceProps.refresh}
             run={run}
             busy={ui.busy}
             refreshAudit={refreshAudit}
             basePath={`/${tenant.slug}/admin/settings`}
+            activeSection={ui.nav === 'staff' ? 'staff' : ui.settingsSection}
             onSectionChange={(section) => patchUi({ settingsSection: section })}
-          />
-        );
+          />;
       case 'account':
         return <Account user={currentUser} busy={ui.busy} run={run} onProfileUpdated={async () => { const refreshed = await api<User>('/auth/me'); setUser(refreshed); }} onSignedOut={logout} />;
       case 'dashboard':
@@ -272,9 +315,13 @@ export default function App({ tenant }: { tenant: TenantContext }) {
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--amber-tint)] px-4 py-2 text-xs text-[var(--ink)]">
-        {isSandboxEnvironment && <><strong>Development sandbox</strong><span>Synthetic records · no live payments, claims, or signatures</span></>}
-        <div className="ml-auto flex gap-3">
+      {(isSandboxEnvironment || ui.error || ui.notice || assignedLocations.length > 1) && <div className="staff-sandbox">
+        <div className="staff-sandbox-main">
+          {isSandboxEnvironment && <><strong>Development sandbox</strong><span> · Synthetic records · no live payments, claims, or signatures</span></>}
+          {ui.error && <span className="staff-sandbox-response is-error" role="alert">{ui.error}</span>}
+          {ui.notice && <span className="staff-sandbox-response" role="status">{ui.notice}</span>}
+        </div>
+        <div className="staff-sandbox-actions">
           {assignedLocations.length > 1 && (
             <label>
               <span className="sr-only">Active location</span>
@@ -283,21 +330,8 @@ export default function App({ tenant }: { tenant: TenantContext }) {
               </select>
             </label>
           )}
-          {tenant.features.front_office && <a className="underline" href={`/${tenant.slug}`}>Front Office</a>}
-          {tenant.features.patient_portal && <a className="underline" href={`/${tenant.slug}/portal`}>Client Portal</a>}
-          <button onClick={() => patchUi({ dark: !ui.dark })}>
-            {ui.dark ? 'Light theme' : 'Dark theme'}
-          </button>
-          <button disabled={ui.busy} onClick={() => void run(() => refresh())}>Refresh</button>
-          <button onClick={() => void handleSignOut()}>Sign out</button>
         </div>
-      </div>
-      {ui.error && (
-        <div role="alert" className="border-b border-[var(--danger)] bg-[var(--danger-tint)] px-6 py-3 text-sm">
-          {ui.error}
-        </div>
-      )}
-      {ui.notice && <div role="status" className="bg-[var(--sage-tint)] px-6 py-2 text-sm">{ui.notice}</div>}
+      </div>}
       <ClinicalDashboard
         organizationName={tenant.name}
         providerName={currentUser.name}
@@ -313,7 +347,14 @@ export default function App({ tenant }: { tenant: TenantContext }) {
         onNewAppointment={() => navigate('schedule')}
         onAccountSection={openAccount}
         onSignOut={() => void handleSignOut()}
+        onOpenNotification={openNotification}
         approvalsHref={`/${tenant.slug}/admin/settings/roles?tab=approvals`}
+        frontOfficeHref={tenant.features.front_office ? `${tenantWebBase}/` : undefined}
+        patientPortalHref={tenant.features.patient_portal ? `${tenantWebBase}/${tenant.slug}/portal` : undefined}
+        dark={ui.dark}
+        onToggleTheme={() => patchUi({ dark: !ui.dark })}
+        refreshBusy={ui.busy}
+        onRefresh={() => void run(() => refresh(), 'Workspace refreshed.')}
         schedule={workspace.dashboard.schedule}
         alerts={[]}
         metrics={[

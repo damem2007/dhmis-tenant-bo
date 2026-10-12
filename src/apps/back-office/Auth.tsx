@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from "react";
 import QRCode from "qrcode";
-import { api, setToken } from "../../shared/api";
-import { Field } from "../../shared/Fields";
-import { isSandboxEnvironment, supportDestination } from "../../shared/environment";
-import type { TenantContext } from "../../shared/tenant";
+import { api, setToken } from "./lib/api";
+import { Field } from "./components/Fields";
+import { isSandboxEnvironment, supportDestination } from "./lib/environment";
+import type { TenantContext } from "./lib/tenant";
 
 type Challenge = {
   tenant_slug: string;

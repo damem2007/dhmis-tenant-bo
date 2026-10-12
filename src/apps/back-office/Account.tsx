@@ -1,7 +1,7 @@
 import type { FormEvent } from 'react';
-import { api } from '../../shared/api';
-import { Field, Title } from '../../shared/Fields';
-import type { User } from '../../shared/types';
+import { api } from './lib/api';
+import { Field, Title } from './components/Fields';
+import type { User } from './types';
 
 type Props = {
   user: User;

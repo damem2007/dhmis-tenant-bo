@@ -13,6 +13,7 @@ export interface TenantContext {
     patient_portal: boolean;
   };
   branding: Record<string, string>;
+  logoUrl?: string;
 }
 
 export interface HostedRoute {

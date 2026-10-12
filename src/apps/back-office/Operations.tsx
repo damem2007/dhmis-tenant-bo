@@ -1,8 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, money } from '../../shared/api';
-import { Empty, Field, Title } from '../../shared/Fields';
-import type { Reference } from '../../shared/types';
+import { api, money } from './lib/api';
+import { Empty, Field, Title } from './components/Fields';
+import type { Reference } from './types';
 import { LocationAutocomplete } from './LocationAutocomplete';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type Run = (action: () => Promise<void>) => Promise<void>;
 type Credential = {
@@ -103,7 +104,7 @@ export function Operations({ reference, permissions, run, busy, refreshReference
 
   return <>
     <Title title="Practice operations" description="Provider credential status and location-specific hours, operatories, branding, and scheduling policy." />
-    {state.type === 'loading' && <p className="panel">Loading operations…</p>}
+    {state.type === 'loading' && <WorkspaceLoadingOverlay label="Loading operations" />}
     {state.type === 'error' && <p className="panel" role="alert">{state.message}</p>}
     {state.type === 'ready' && <>
       {state.alerts.length > 0 && <section className="mb-5 rounded-xl border border-[var(--danger)] bg-[var(--danger-tint)] p-4"><h2 className="font-semibold">Credential attention required</h2><p className="text-sm">{state.alerts.length} credential{state.alerts.length === 1 ? '' : 's'} are expiring or expired. Required expired credentials block scheduling and prescribing.</p></section>}

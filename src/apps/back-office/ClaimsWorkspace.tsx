@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, money } from "../../shared/api";
-import { Field, Title, Empty } from "../../shared/Fields";
+import { api, money } from "./lib/api";
+import { Field, Title, Empty } from "./components/Fields";
 import type {
   Patient,
   Invoice,
   Claim,
   InsurancePlan,
   Reference,
-} from "../../shared/types";
+} from "./types";
 export function ClaimsWorkspace({
   patients,
   invoices,

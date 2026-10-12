@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, money } from '../../shared/api';
-import { Empty, Field } from '../../shared/Fields';
+import { api, money } from './lib/api';
+import { Empty, Field } from './components/Fields';
 import type {
   Chart,
   Consent,
@@ -10,7 +10,8 @@ import type {
   Reference,
   Service,
   TreatmentOption,
-} from '../../shared/types';
+} from './types';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type Run = (action: () => Promise<void>) => Promise<void>;
 type ClinicalTab = 'chart' | 'periodontal' | 'encounters' | 'treatment';
@@ -96,7 +97,7 @@ export function ClinicalWorkspace({ patient, services, reference, run, busy, ref
     void load().catch((reason) => setRecord({ type: 'error', message: reason.message }));
   }, [patient.id]);
 
-  if (record.type === 'loading') return <div className="panel mt-5">Loading clinical record…</div>;
+  if (record.type === 'loading') return <WorkspaceLoadingOverlay label="Loading clinical record" />;
   if (record.type === 'error') return <div className="panel mt-5">{record.message}</div>;
 
   const { chart, consents } = record;

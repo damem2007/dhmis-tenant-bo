@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, authenticatedBlobUrl, download } from '../../shared/api';
-import { Field } from '../../shared/Fields';
+import { api, authenticatedBlobUrl, download } from './lib/api';
+import { Field } from './components/Fields';
 
 type PatientChoice = { id: string; first_name: string; last_name: string };
 type DocumentRecord = { id: string; patient_id: string; filename: string; description: string; mime_type: string; comparison_group: string };
 type MessageThread = { id: string; patient_id: string; subject: string; status: string };
+type ThreadMessage = { id: string; sender_type: string; body: string; created_at: string };
 type SupportState = {
   selectedPatient: string;
   documents: DocumentRecord[];
@@ -12,6 +13,8 @@ type SupportState = {
   inviteToken: string;
   error: string;
   previews: Record<string, string>;
+  selectedThreadId: string;
+  selectedMessages: ThreadMessage[];
 };
 
 export function Phase2Support({
@@ -30,6 +33,8 @@ export function Phase2Support({
     inviteToken: '',
     error: '',
     previews: {},
+    selectedThreadId: '',
+    selectedMessages: [],
   });
 
   function patchState(next: Partial<SupportState>) {
@@ -118,13 +123,40 @@ export function Phase2Support({
     const form = new FormData(event.currentTarget);
     await run(async () => {
       await api(`/messages/${form.get('thread_id')}/reply`, { body: form.get('body') });
+      await openThread(String(form.get('thread_id')));
       await load();
       event.currentTarget.reset();
     });
   }
 
+  async function openThread(threadId: string) {
+    const result = await api<{ thread: MessageThread; messages: ThreadMessage[] }>(`/messages/${threadId}`);
+    setState((current) => ({
+      ...current,
+      threads: current.threads.some((thread) => thread.id === result.thread.id)
+        ? current.threads
+        : [result.thread, ...current.threads],
+      selectedThreadId: threadId,
+      selectedMessages: result.messages,
+    }));
+  }
+
   useEffect(() => {
     void load().catch((reason) => patchState({ error: reason.message }));
+  }, []);
+
+  useEffect(() => {
+    const threadId = new URLSearchParams(window.location.search).get('thread');
+    if (threadId) void openThread(threadId).catch((reason) => patchState({ error: reason.message }));
+  }, []);
+
+  useEffect(() => {
+    const handleNotification = (event: Event) => {
+      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
+      if (threadId) void openThread(threadId).catch((reason) => patchState({ error: reason.message }));
+    };
+    window.addEventListener('dhmis:open-message', handleNotification);
+    return () => window.removeEventListener('dhmis:open-message', handleNotification);
   }, []);
 
   useEffect(
@@ -177,7 +209,14 @@ export function Phase2Support({
 
         <div className="panel">
           <h3 className="mb-3 font-semibold">Secure patient messages</h3>
-          {state.threads.map((thread) => <div key={thread.id} className="mb-3 rounded-lg border border-[var(--border)] p-3 text-sm"><strong>{thread.subject}</strong><p>{thread.status}</p><form className="mt-2 flex gap-2" onSubmit={handleReply}><input type="hidden" name="thread_id" value={thread.id} /><input className="field" name="body" placeholder="Reply" required /><button className="btn-secondary" disabled={busy}>Send</button></form></div>)}
+          {!state.threads.length && <p className="text-sm text-[var(--ink-muted)]">No patient messages yet.</p>}
+          {state.threads.map((thread) => <div key={thread.id} className={`mb-3 rounded-lg border p-3 text-sm ${state.selectedThreadId === thread.id ? 'border-[var(--sage)] bg-[var(--sage-tint)]' : 'border-[var(--border)]'}`}>
+            <button type="button" className="w-full text-left" onClick={() => void openThread(thread.id)}><strong>{thread.subject}</strong><p>{thread.status}</p></button>
+            {state.selectedThreadId === thread.id && <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
+              {state.selectedMessages.map((message) => <p key={message.id} className="rounded-md bg-[var(--surface)] p-2"><strong>{message.sender_type === 'patient' ? 'Patient' : 'Clinic'}:</strong> {message.body}</p>)}
+              <form className="flex gap-2" onSubmit={handleReply}><input type="hidden" name="thread_id" value={thread.id} /><input className="field" name="body" placeholder="Reply" required /><button className="btn-secondary" disabled={busy}>Send</button></form>
+            </div>}
+          </div>)}
         </div>
       </div>
     </section>

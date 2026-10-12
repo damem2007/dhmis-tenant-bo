@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './apps/back-office/App';
-import { setTenantSlug } from './shared/api';
-import type { TenantContext } from './shared/tenant';
+import { setTenantSlug } from './apps/back-office/lib/api';
+import type { TenantContext } from './apps/back-office/lib/tenant';
 import { installFormEnhancements } from './formEnhancements';
+import { BrandLoader } from './apps/back-office/components/BrandLoader';
 import './styles/global.css';
 
 function tenantSlugFromHostname(hostname: string) {
@@ -21,6 +22,7 @@ function TenantAdminEntry() {
     surface: 'back-office',
     features: { front_office: true, booking: true, patient_portal: true },
     branding: {},
+    logoUrl: '',
   };
   const [tenant, setTenant] = useState<TenantContext | null>(null);
 
@@ -42,6 +44,7 @@ function TenantAdminEntry() {
           domain: payload.domain || undefined,
           features: payload.features || fallback.features,
           branding: payload.branding || fallback.branding,
+          logoUrl: payload.logo_url || fallback.logoUrl,
         });
       })
       .catch((reason) => {
@@ -54,7 +57,7 @@ function TenantAdminEntry() {
     if (tenant) setTenantSlug(tenant.slug);
   }, [tenant]);
 
-  if (!tenant) return <div className="tenant-route-loading" role="status" aria-label="Loading clinic"><strong>DHMIS</strong><span>Loading tenant workspace…</span></div>;
+  if (!tenant) return <div className="tenant-route-loading" role="status" aria-label="Loading clinic"><BrandLoader size={42} /><strong>DHMIS</strong><span>Loading tenant workspace…</span></div>;
   return <App tenant={tenant} />;
 }
 

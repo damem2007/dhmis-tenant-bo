@@ -1,13 +1,13 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, money } from "../../shared/api";
+import { api, money } from "./lib/api";
 import type {
   Patient,
   Invoice,
   Service,
   Claim,
   Reference,
-} from "../../shared/types";
-import { Field, Title } from "../../shared/Fields";
+} from "./types";
+import { Field, Title } from "./components/Fields";
 import { ClaimsWorkspace } from "./ClaimsWorkspace";
 type Ledger = {
   id: string;
@@ -104,21 +104,6 @@ export function Billing(props: Props) {
     });
   }
 
-  async function handleService(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    await run(async () => {
-      await api("/billing/services", {
-        code: form.get("code"),
-        name: form.get("name"),
-        fee_cents: Math.round(Number(form.get("fee")) * 100),
-      });
-      formElement.reset();
-      await refresh();
-    });
-  }
-
   async function handleFeeVersion(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
@@ -209,11 +194,11 @@ export function Billing(props: Props) {
   return (
     <>
       <Title
-        title="Billing & services"
-        description="Versioned fees, balanced ledger postings, patient statements, and configurable payment providers."
+        title="Billing"
+        description="Invoices, versioned fees, balanced ledger postings, patient statements, and payment providers."
       />
       {state.error && <p role="alert">{state.error}</p>}
-      <div className="mb-5 grid gap-5 lg:grid-cols-2">
+      <div className="mb-5 grid gap-5">
         <form
           className="panel space-y-3"
           onSubmit={handleInvoice}
@@ -247,31 +232,6 @@ export function Billing(props: Props) {
             Completed encounters generate invoices from performed procedures
             automatically.
           </p>
-        </form>
-        <form
-          className="panel space-y-3"
-          onSubmit={handleService}
-        >
-          <h2 className="font-semibold">Add service</h2>
-          <Field label="Service code">
-            <input className="field" name="code" required maxLength={30} />
-          </Field>
-          <Field label="Service name">
-            <input className="field" name="name" required maxLength={180} />
-          </Field>
-          <Field label="Base fee (CAD)">
-            <input
-              className="field"
-              name="fee"
-              type="number"
-              min="0"
-              step="0.01"
-              required
-            />
-          </Field>
-          <button className="btn-secondary" disabled={busy}>
-            Save service
-          </button>
         </form>
       </div>
       <details className="panel mb-5">

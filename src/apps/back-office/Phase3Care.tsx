@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, authenticatedBlobUrl } from '../../shared/api';
-import { Empty, Field, Title } from '../../shared/Fields';
-import type { Chart, Patient, Reference } from '../../shared/types';
+import { api, authenticatedBlobUrl } from './lib/api';
+import { Empty, Field, Title } from './components/Fields';
+import type { Chart, Patient, Reference } from './types';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type Run = (action: () => Promise<void>) => Promise<void>;
 type CareTab = 'prescriptions' | 'labs' | 'referrals' | 'surgery';
@@ -125,7 +126,7 @@ export function Phase3Care({ patients, reference, permissions, run, busy }: {
 
   function renderContent() {
     if (state.type === 'empty') return <Empty>Add a patient before starting a care workflow.</Empty>;
-    if (state.type === 'loading') return <p className="panel">Loading care record…</p>;
+    if (state.type === 'loading') return <WorkspaceLoadingOverlay label="Loading care record" />;
     if (state.type === 'error') return <p className="panel" role="alert">{state.message}</p>;
     if (!record) return null;
 

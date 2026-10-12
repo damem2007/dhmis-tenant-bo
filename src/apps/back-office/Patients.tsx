@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
-import { api } from "../../shared/api";
-import type { Patient, Reference, Service } from "../../shared/types";
-import { Field, Title, Empty } from "../../shared/Fields";
+import { api } from "./lib/api";
+import type { Patient, Reference, Service } from "./types";
+import { Field, Title, Empty } from "./components/Fields";
 import { ClinicalWorkspace } from "./ClinicalWorkspace";
 import { PatientDetails } from "./PatientDetails";
 type Props = {
@@ -25,6 +25,7 @@ export function Patients({
   permissions,
 }: Props) {
   const [selected, setSelected] = useState<Patient | null>(null);
+  const [invitationLink, setInvitationLink] = useState('');
   const visible = patients.filter((p) =>
     `${p.first_name} ${p.last_name}`
       .toLowerCase()
@@ -36,7 +37,7 @@ export function Patients({
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
     await run(async () => {
-      await api("/patients", {
+      const result = await api<{ invitation_link?: string }>("/patients", {
         first_name: form.get("first"),
         last_name: form.get("last"),
         birth_date: form.get("dob"),
@@ -44,6 +45,7 @@ export function Patients({
         phone: form.get("phone"),
         location_id: form.get("location"),
       });
+      setInvitationLink(result.invitation_link || '');
       formElement.reset();
       await refresh();
     });
@@ -128,6 +130,7 @@ export function Patients({
           <button disabled={busy} className="btn w-full">
             Save patient
           </button>
+          {invitationLink && <p className="break-all text-sm" role="status"><strong>Client Portal invitation:</strong> <a className="underline" href={invitationLink}>{invitationLink}</a></p>}
         </form>
       </div>
       {selected && (

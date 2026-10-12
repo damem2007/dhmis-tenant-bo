@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
-import { api } from '../../shared/api';
-import type { Appointment, Patient, Reference } from '../../shared/types';
-import { Empty, Field, Title } from '../../shared/Fields';
+import { api } from './lib/api';
+import type { Appointment, Patient, Reference } from './types';
+import { Empty, Field, Title } from './components/Fields';
 
 type Props = {
   patients: Patient[];

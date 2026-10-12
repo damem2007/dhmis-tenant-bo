@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { ArrowDown, ArrowUp, Image, Plus, Trash2 } from 'lucide-react';
-import { api, authenticatedBlobUrl } from '../../shared/api';
-import type { Reference, User } from '../../shared/types';
-import type { TenantContext } from '../../shared/tenant';
-import { DentalServiceIcon, dentalServiceIconLabels, dentalServiceIconNames } from '../../shared/DentalServiceIcon';
+import { api, authenticatedBlobUrl } from './lib/api';
+import type { Reference, Service, User } from './types';
+import type { TenantContext } from './lib/tenant';
+import { DentalServiceIcon, dentalServiceIconLabels, dentalServiceIconNames } from './components/DentalServiceIcon';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type ConsentEvidence = {
   confirmed: boolean;
@@ -24,6 +25,7 @@ type CmsMedia = {
 };
 type CmsService = {
   id: string;
+  catalog_service_id?: string | null;
   title: string;
   icon: string;
   description: string;
@@ -97,7 +99,7 @@ type PendingPublication = {
     reason: string;
   };
 };
-type Blocker = { code: string; asset_key?: string; dentist_id?: string; location_id?: string; testimonial_id?: string };
+type Blocker = { code: string; asset_key?: string; dentist_id?: string; location_id?: string; testimonial_id?: string; service_id?: string };
 type Preflight = {
   valid: boolean;
   blocker_count: number;
@@ -146,6 +148,8 @@ function blockerLabel(blocker: Blocker) {
     'testimonial.consent.required': 'Record written testimonial consent',
     'scope.location.unknown': 'A publication location is no longer available',
     'content.location.unknown': 'A website location is no longer available',
+    'service.catalog.unknown': 'Sync this service from Services & fees before publishing',
+    'service.catalog.duplicate': 'A service appears more than once; sync from Services & fees',
   };
   return labels[blocker.code] || blocker.code;
 }
@@ -393,12 +397,49 @@ export function SiteEditor({ tenant, user, reference }: { tenant: TenantContext;
     });
   }
 
+  async function syncServicesFromCatalogue() {
+    if (!revision) return;
+    setBusy(true);
+    setError('');
+    try {
+      const catalogue = await api<Service[]>('/billing/catalog');
+      const currentByCatalog = new Map(revision.content.services.filter((item) => item.catalog_service_id).map((item) => [item.catalog_service_id, item]));
+      const next = catalogue.map((service, order) => {
+        const existing = currentByCatalog.get(service.id);
+        return {
+          id: existing?.id || service.id,
+          catalog_service_id: service.id,
+          title: service.name,
+          icon: existing?.icon || ({
+            'CHECKUP-CLEAN': 'checkup',
+            FILLINGS: 'filling',
+            EMERGENCY: 'emergency',
+            WHITENING: 'whitening',
+            'CHILDREN-DENTISTRY': 'kids',
+            CONSULTATION: 'consult',
+          } as Record<string, string>)[service.code] || 'tooth',
+          description: service.description.slice(0, 90),
+          fee_mode: existing?.fee_mode || (service.fee_cents === 0 ? 'free' : 'from'),
+          fee_cents: service.fee_cents,
+          visible: existing?.visible ?? true,
+          order,
+        } satisfies CmsService;
+      });
+      changeContent((draft) => { draft.services = next; });
+      setMessage('Services synced from Services & fees. Save the draft to publish the changes.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'The service catalogue could not be loaded.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const content = revision?.content;
   const visibleServices = useMemo(() => content?.services.filter((service) => service.visible).sort((a, b) => a.order - b.order) || [], [content]);
   const visibleDentists = useMemo(() => content?.dentists.filter((dentist) => dentist.visible).sort((a, b) => a.order - b.order) || [], [content]);
   const blockers = preflight?.blockers || [];
 
-  if (!revision || !content) return <section className="panel" aria-busy={busy}>{error || 'Loading site editor…'}</section>;
+  if (!revision || !content) return error ? <section className="panel" aria-busy={busy}>{error}</section> : <WorkspaceLoadingOverlay label="Loading site editor" />;
 
   return (
     <section className="cms-editor" aria-label="Clinic site editor">
@@ -419,15 +460,15 @@ export function SiteEditor({ tenant, user, reference }: { tenant: TenantContext;
         </nav>
         <main className="cms-editor-main">
           {tab === 'services' && <>
-            <h1>Services &amp; fees</h1><p className="muted">Shown in this order. Hidden services stay saved.{visibleServices.length === 0 && <strong> With none visible, this section is hidden from your site.</strong>}</p>
+            <div className="flex flex-wrap items-start justify-between gap-3"><div><h1>Services &amp; fees</h1><p className="muted">Services &amp; fees is the source catalogue for billing, providers, and this site. Sync here to inherit its services; edit the catalogue to change names, descriptions, and prices. Hidden services stay saved.{visibleServices.length === 0 && <strong> With none visible, this section is hidden from your site.</strong>}</p></div><button type="button" className="btn-secondary" onClick={() => void syncServicesFromCatalogue()} disabled={busy}>Sync from Services &amp; fees</button></div>
             {content.services.map((service, index) => <article className="cms-edit-card" key={service.id}>
-              <label className="label">Title<input className="field" value={service.title} onChange={(event) => changeContent((draft) => { draft.services[index].title = event.target.value; })} /></label>
+              <label className="label">Title<input className="field" value={service.title} disabled onChange={(event) => changeContent((draft) => { draft.services[index].title = event.target.value; })} /></label>
               <fieldset className="cms-icon-picker"><legend>Service icon</legend>{dentalServiceIconNames.map((icon) => <label key={icon} className={service.icon === icon ? 'selected' : ''}><input type="radio" name={`service-icon-${service.id}`} value={icon} checked={service.icon === icon} onChange={() => changeContent((draft) => { draft.services[index].icon = icon; })} /><DentalServiceIcon name={icon} size={24} /><span>{dentalServiceIconLabels[icon]}</span></label>)}</fieldset>
-              <label className="label">Short description<textarea className="field" rows={2} maxLength={90} value={service.description} onChange={(event) => changeContent((draft) => { draft.services[index].description = event.target.value; })} /><small>{service.description.length}/90</small></label>
-              <div className="cms-two"><label className="label">Fee display<select className="field" value={service.fee_mode} onChange={(event) => changeContent((draft) => { draft.services[index].fee_mode = event.target.value as CmsService['fee_mode']; if (event.target.value === 'from' && draft.services[index].fee_cents === null) draft.services[index].fee_cents = 0; })}><option value="from">From $…</option><option value="free">Free</option><option value="contact">Contact us</option></select></label>{service.fee_mode === 'from' && <label className="label">Starting fee (CAD)<input className="field" type="number" min="0" step="0.01" value={(service.fee_cents || 0) / 100} onChange={(event) => changeContent((draft) => { draft.services[index].fee_cents = Math.round(Number(event.target.value) * 100); })} /></label>}</div>
-              <div className="cms-card-tools"><label><input type="checkbox" checked={service.visible} onChange={(event) => changeContent((draft) => { draft.services[index].visible = event.target.checked; })} /> Show on site</label><span /><button type="button" aria-label={`Move ${service.title} up`} disabled={index === 0} onClick={() => moveService(index, -1)}><ArrowUp size={15} /></button><button type="button" aria-label={`Move ${service.title} down`} disabled={index === content.services.length - 1} onClick={() => moveService(index, 1)}><ArrowDown size={15} /></button><button type="button" onClick={() => changeContent((draft) => { draft.services.splice(index, 1); })}><Trash2 size={15} /> Remove</button></div>
+              <label className="label">Short description<textarea className="field" rows={2} maxLength={90} value={service.description} disabled onChange={(event) => changeContent((draft) => { draft.services[index].description = event.target.value; })} /><small>{service.description.length}/90</small></label>
+              <div className="cms-two"><label className="label">Fee display<select className="field" value={service.fee_mode} disabled onChange={(event) => changeContent((draft) => { draft.services[index].fee_mode = event.target.value as CmsService['fee_mode']; if (event.target.value === 'from' && draft.services[index].fee_cents === null) draft.services[index].fee_cents = 0; })}><option value="from">From $…</option><option value="free">Free</option><option value="contact">Contact us</option></select></label>{service.fee_mode === 'from' && <label className="label">Starting fee (CAD)<input className="field" type="number" min="0" step="0.01" value={(service.fee_cents || 0) / 100} disabled onChange={(event) => changeContent((draft) => { draft.services[index].fee_cents = Math.round(Number(event.target.value) * 100); })} /></label>}</div>
+              <div className="cms-card-tools"><label><input type="checkbox" checked={service.visible} onChange={(event) => changeContent((draft) => { draft.services[index].visible = event.target.checked; })} /> Show on site</label><span /><button type="button" aria-label={`Move ${service.title} up`} disabled={index === 0} onClick={() => moveService(index, -1)}><ArrowUp size={15} /></button><button type="button" aria-label={`Move ${service.title} down`} disabled={index === content.services.length - 1} onClick={() => moveService(index, 1)}><ArrowDown size={15} /></button><button type="button" onClick={() => changeContent((draft) => { draft.services[index].visible = false; })}><Trash2 size={15} /> Hide from site</button></div>
             </article>)}
-            <button type="button" className="btn-secondary" onClick={() => changeContent((draft) => { draft.services.push({ id: crypto.randomUUID(), title: '', icon: 'consult', description: '', fee_mode: 'contact', fee_cents: null, visible: true, order: draft.services.length }); })}><Plus size={16} /> Add service</button>
+            <p className="muted">To add, rename, price, or delete a service, use Services &amp; fees under Admin, then sync this page.</p>
           </>}
           {tab === 'dentists' && <>
             <h1>Dentists</h1><p className="muted">Photos are optional. Initials show when there is no photo.</p>

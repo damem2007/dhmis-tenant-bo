@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { api, money } from '../../shared/api';
-import { Empty, Field, Title } from '../../shared/Fields';
-import type { Reference } from '../../shared/types';
+import { api, money } from './lib/api';
+import { Empty, Field, Title } from './components/Fields';
+import type { Reference } from './types';
+import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
 
 type ReportRow = {
   location_id: string;
@@ -85,7 +86,7 @@ export function Reports({ reference }: { reference: Reference }) {
         <button className="btn self-end">Run report</button>
       </form>
 
-      {state.type === 'loading' && <p className="panel">Calculating report…</p>}
+      {state.type === 'loading' && <WorkspaceLoadingOverlay label="Calculating report" />}
       {state.type === 'error' && <p className="panel" role="alert">{state.message}</p>}
       {state.type === 'ready' && (
         <>

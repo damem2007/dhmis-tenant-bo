@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { api, money } from "../../shared/api";
-import { Field } from "../../shared/Fields";
-import type { Patient, Reference, InsurancePlan } from "../../shared/types";
+import { api, money } from "./lib/api";
+import { Field } from "./components/Fields";
+import type { Patient, Reference, InsurancePlan } from "./types";
 export function PatientDetails({
   patient,
   patients,

@@ -1,4 +1,4 @@
-import type { ScheduleItem } from "../apps/back-office/ClinicalDashboard";
+import type { ScheduleItem } from "./ClinicalDashboard";
 export interface Patient {
   id: string;
   first_name: string;

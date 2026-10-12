@@ -9,7 +9,7 @@ import {
   ShieldAlert,
   UserRound,
 } from 'lucide-react';
-import { api } from './api';
+import { api } from '../lib/api';
 
 export type ApprovalNotification = {
   request_id?: string;
@@ -24,6 +24,8 @@ export type ApprovalNotification = {
   counted?: boolean;
   seen?: boolean;
   unread?: boolean;
+  thread_id?: string;
+  patient_id?: string;
 };
 
 export type ApprovalNotificationFeed = { items: ApprovalNotification[]; unread_count: number };
@@ -106,11 +108,12 @@ function notificationGroupLabel(value: string) {
   return 'Earlier';
 }
 
-export function ApprovalBell({ domain, approvalsHref }: { domain: 'tenant' | 'platform'; approvalsHref: string }) {
+export function ApprovalBell({ domain, approvalsHref, onOpenNotification }: { domain: 'tenant' | 'platform'; approvalsHref: string; onOpenNotification?: (item: ApprovalNotification) => void }) {
   const [feed, setFeed] = useState<ApprovalNotificationFeed>({ items: [], unread_count: 0 });
   const [systemPage, setSystemPage] = useState(1);
   const [systemPages, setSystemPages] = useState(1);
   const [open, setOpen] = useState(false);
+  const [centerOpen, setCenterOpen] = useState(false);
   const readStorageKey = `dhmis:notifications:read:${domain}`;
   const [readIds, setReadIds] = useState<Set<string>>(() => {
     try {
@@ -148,10 +151,21 @@ export function ApprovalBell({ domain, approvalsHref }: { domain: 'tenant' | 'pl
       return next;
     });
   }
-  async function openApprovals(item?: ApprovalNotification) {
+  async function reviewApproval(item?: ApprovalNotification) {
     if (item) markRead(item);
+    if (item && !item.request_id && item.thread_id) {
+      onOpenNotification?.(item);
+      setOpen(false);
+      setCenterOpen(false);
+      return;
+    }
     try { await api(`${prefix}/notifications/seen`, {}); } catch { /* Keep navigation available. */ }
     window.location.assign(approvalsHref);
+  }
+  function openNotificationCenter() {
+    setOpen(false);
+    setCenterOpen(true);
+    void api(`${prefix}/notifications/seen`, {}).catch(() => { /* The center remains available if marking seen fails. */ });
   }
 
   useEffect(() => {
@@ -166,6 +180,7 @@ export function ApprovalBell({ domain, approvalsHref }: { domain: 'tenant' | 'pl
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
       if (event instanceof MouseEvent && root.current?.contains(event.target as Node)) return;
       setOpen(false);
+      setCenterOpen(false);
     }
     document.addEventListener('mousedown', dismiss);
     document.addEventListener('keydown', dismiss);
@@ -183,17 +198,44 @@ export function ApprovalBell({ domain, approvalsHref }: { domain: 'tenant' | 'pl
     return [...groups.entries()];
   }, [visibleItems]);
 
+  function renderItems(items: ApprovalNotification[], menu = false) {
+    const groups = new Map<string, ApprovalNotification[]>();
+    items.forEach((item) => {
+      const label = notificationGroupLabel(item.created_at);
+      groups.set(label, [...(groups.get(label) || []), item]);
+    });
+    return [...groups.entries()].map(([label, grouped]) => <Fragment key={label}>
+      <div className="approval-bell-group-label">{label}</div>
+      {grouped.map((item) => <button key={`${item.kind}-${item.request_id || item.id || item.created_at}`} type="button" role={menu ? 'menuitem' : undefined} className={`${item.kind === 'waiting' ? 'is-waiting' : ''} ${item.severity ? `is-${item.severity}` : ''}`} onClick={() => item.request_id || item.thread_id ? void reviewApproval(item) : (markRead(item), setOpen(false), setCenterOpen(false))}>
+        <span className={`approval-bell-icon is-${notificationCategory(item)}`}>{notificationIcon(item)}</span>
+        <span className="approval-bell-copy"><strong>{item.title}</strong><small>{item.detail}</small><time dateTime={item.created_at}>{relativeTime(item.created_at)}</time></span>
+        <span className="approval-bell-item-cta">{notificationCta(item)} <span aria-hidden="true">→</span></span>
+      </button>)}
+    </Fragment>);
+  }
+
   return <div className="approval-bell" ref={root}>
-    <button type="button" aria-label={`Approvals and notifications${unreadCount ? `, ${unreadCount} need attention` : ''}`} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+    <button type="button" aria-label={`Approvals and notifications${unreadCount ? `, ${unreadCount} need attention` : ''}`} aria-haspopup="dialog" aria-expanded={open || centerOpen} onClick={() => setOpen((value) => !value)}>
       <Bell size={17} aria-hidden="true" />
       {unreadCount > 0 && <span aria-hidden="true">{unreadCount > 99 ? '99+' : unreadCount}</span>}
     </button>
     {open && <div className="approval-bell-menu" role="menu">
       <div className="approval-bell-menu-header"><strong>Notifications</strong><small>{unreadCount ? `${unreadCount} need your attention` : 'All caught up'}</small></div>
-      {groupedItems.map(([label, items]) => <Fragment key={label}><div className="approval-bell-group-label">{label}</div>{items.map((item) => <button key={`${item.kind}-${item.request_id || item.id || item.created_at}`} type="button" role="menuitem" className={`${item.kind === 'waiting' ? 'is-waiting' : ''} ${item.severity ? `is-${item.severity}` : ''}`} onClick={() => item.request_id ? void openApprovals(item) : (markRead(item), setOpen(false))}><span className={`approval-bell-icon is-${notificationCategory(item)}`}>{notificationIcon(item)}</span><span className="approval-bell-copy"><strong>{item.title}</strong><small>{item.detail}</small><time dateTime={item.created_at}>{relativeTime(item.created_at)}</time><span className="approval-bell-cta">{notificationCta(item)} <span aria-hidden="true">→</span></span></span></button>)}</Fragment>)}
+      {renderItems(groupedItems.flatMap(([, items]) => items), true)}
       {!visibleItems.length && <p>No active notifications.</p>}
       <div className="approval-bell-pagination"><button type="button" disabled={systemPage <= 1} onClick={() => setSystemPage((page) => page - 1)}>Previous</button><span>Page {systemPage} of {systemPages}</span><button type="button" disabled={systemPage >= systemPages} onClick={() => setSystemPage((page) => page + 1)}>Next</button></div>
-      <button type="button" role="menuitem" className="approval-bell-open" onClick={() => void openApprovals()}>Open approvals</button>
+      <button type="button" role="menuitem" className="approval-bell-open" onClick={openNotificationCenter}>View all notifications</button>
+    </div>}
+    {centerOpen && <div className="approval-notification-center-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setCenterOpen(false); }}>
+      <section className="approval-notification-center" role="dialog" aria-modal="true" aria-labelledby="approval-notification-center-title">
+        <header className="approval-notification-center-header"><div><h2 id="approval-notification-center-title">Notification center</h2><p>{unreadCount ? `${unreadCount} need your attention` : 'All caught up'}</p></div><button type="button" className="approval-notification-center-close" aria-label="Close notification center" onClick={() => setCenterOpen(false)}><span>Close</span><span aria-hidden="true">×</span></button></header>
+        <div className="approval-notification-center-list">
+          {renderItems(visibleItems)}
+          {!visibleItems.length && <p className="approval-notification-center-empty">No active notifications.</p>}
+        </div>
+        <div className="approval-bell-pagination"><button type="button" disabled={systemPage <= 1} onClick={() => setSystemPage((page) => page - 1)}>Previous</button><span>Page {systemPage} of {systemPages}</span><button type="button" disabled={systemPage >= systemPages} onClick={() => setSystemPage((page) => page + 1)}>Next</button></div>
+        <footer className="approval-notification-center-footer"><a href={approvalsHref}>Review approvals <span aria-hidden="true">→</span></a></footer>
+      </section>
     </div>}
   </div>;
 }
