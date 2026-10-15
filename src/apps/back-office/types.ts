@@ -11,6 +11,14 @@ export interface Patient {
   medical_history: string;
   dental_history: string;
   alerts: string[];
+  archived_at?: string | null;
+}
+export interface PatientPage {
+  items: Patient[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
 }
 export interface Appointment {
   id: string;
@@ -33,6 +41,7 @@ export interface Service {
 export interface Invoice {
   id: string;
   patient_id: string;
+  location_id?: string;
   total_cents: number;
   paid_cents: number;
   adjustment_cents: number;
@@ -56,6 +65,7 @@ export interface Reference {
     id: string;
     name: string;
     address?: string;
+    phone?: string;
     latitude?: number | null;
     longitude?: number | null;
     osm_place_id?: string;
@@ -65,6 +75,7 @@ export interface Reference {
     closing_hour: number;
     branding: Record<string, string>;
     policy: Record<string, number>;
+    active?: boolean;
   }[];
   providers: { id: string; name: string }[];
 }

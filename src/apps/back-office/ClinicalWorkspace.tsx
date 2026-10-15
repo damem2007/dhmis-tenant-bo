@@ -203,6 +203,7 @@ export function ClinicalWorkspace({ patient, services, reference, run, busy, ref
         ))}
       </div>
       <Field label="Link new entries to encounter">
+        <p className="muted mb-2 text-xs">Encounters are created when a confirmed appointment is checked in. Use the historical option for information carried over from an earlier visit.</p>
         <select className="field mb-4" value={view.encounterId} onChange={(event) => patchView({ encounterId: event.target.value })}>
           <option value="">Historical record / no open encounter</option>
           {chart.encounters.filter((encounter) => encounter.status === 'open').map((encounter) => (

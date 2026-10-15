@@ -4,6 +4,7 @@ import {
   Calendar,
   Users,
   Mail,
+  MessageCircle,
   FileText,
   Wallet,
   HeartPulse,
@@ -22,6 +23,8 @@ import {
   AlertTriangle,
   Clock,
   type LucideIcon,
+  RefreshCcw,
+  RefreshCcwDot,
 } from "lucide-react";
 import {
   clinicAdministratorDestination,
@@ -118,8 +121,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: "schedule", label: "Schedule", icon: Calendar },
       { key: "patients", label: "Patients", icon: Users },
-      { key: "patient-invitations", label: "Patient invitations", icon: Mail },
-      { key: "care", label: "Care workflows", icon: HeartPulse },
     ],
   },
   {
@@ -134,6 +135,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Admin",
     items: [
       { key: "operations", label: "Operations", icon: Building2 },
+      { key: "locations", label: "Locations", icon: Building2 },
       { key: "staff", label: "Staff & users", icon: Users },
       { key: "site", label: "Site editor", icon: Globe2 },
       { key: "services", label: "Services & fees", icon: Wallet },
@@ -142,15 +144,26 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+const PATIENT_SUBNAV: { key: NavKey; label: string; icon: LucideIcon }[] = [
+  { key: "patients", label: "Patients", icon: Users },
+  { key: "patient-invitations", label: "Invitations", icon: Mail },
+  { key: "patient-communication", label: "Communications", icon: MessageCircle },
+  { key: "care", label: "Case workflow", icon: HeartPulse },
+];
+
+const PATIENT_NAV_KEYS = new Set<NavKey>(PATIENT_SUBNAV.map((item) => item.key));
+
 const NAV_PERMISSION: Partial<Record<NavKey, string>> = {
   schedule: "scheduling",
   patients: "patients",
   "patient-invitations": "patients",
+  "patient-communication": "messaging",
   care: "clinical",
   billing: "billing",
   claims: "claims",
   reports: "reporting",
   operations: "operations",
+  locations: "operations",
   staff: "settings",
   site: "settings",
   services: "billing",
@@ -201,6 +214,7 @@ export function ClinicalDashboard({
   const [accountOpen, setAccountOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [settingsExpanded, setSettingsExpanded] = useState(activeNav === "settings");
+  const [patientsExpanded, setPatientsExpanded] = useState(PATIENT_NAV_KEYS.has(activeNav));
   const [supportMessage, setSupportMessage] = useState("");
   const helpRef = useRef<HTMLDivElement>(null);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -227,6 +241,7 @@ export function ClinicalDashboard({
   }, [helpOpen, accountOpen]);
   useEffect(() => {
     if (activeNav === "settings") setSettingsExpanded(true);
+    if (PATIENT_NAV_KEYS.has(activeNav)) setPatientsExpanded(true);
   }, [activeNav]);
   function unavailable(label: string) {
     setSupportMessage(`${label} has not been configured for this clinic. Ask an organization administrator to configure it in Settings.`);
@@ -274,7 +289,7 @@ export function ClinicalDashboard({
             </div>
           )}
           {onToggleTheme && <button type="button" className="staff-header-action" onClick={onToggleTheme}>{dark ? "Light theme" : "Dark theme"}</button>}
-          {onRefresh && <button type="button" className="staff-header-action" disabled={refreshBusy} onClick={onRefresh}>{refreshBusy ? "Refreshing…" : "Refresh"}</button>}
+          {onRefresh && <button type="button" className="staff-header-action" disabled={refreshBusy} onClick={onRefresh}>{refreshBusy ? <RefreshCcwDot size={20} /> : <RefreshCcw size={20} />}</button>}
           <div className="staff-help" ref={helpRef}>
             <button type="button" aria-haspopup="menu" aria-expanded={helpOpen} onClick={() => { setAccountOpen(false); setSupportMessage(""); setHelpOpen((current) => !current); }} className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--ink-muted)] hover:bg-[var(--paper)]">? Help</button>
             {helpOpen && <div className="staff-help-menu" role="menu"><strong>Help &amp; support</strong><span>All systems operational</span>{supportItem("Contact DHMIS support", supportDestination)}{supportItem("Email support", supportEmail ? `mailto:${supportEmail}` : "")}{supportItem("Ask my clinic administrator", clinicAdministratorDestination)}{supportItem("Guides & how-tos", guidesDestination)}{supportMessage && <span role="status">{supportMessage}</span>}<small>Do not include patient names or health details in a support request. The page and time may be attached automatically.</small></div>}
@@ -314,15 +329,20 @@ export function ClinicalDashboard({
               <p className="mb-1.5 px-3 text-xs font-medium text-[var(--ink-faint)]">{group.label}</p>
               <ul className="flex flex-col gap-0.5">
                 {group.items.filter((item) => item.key === "dashboard" || permissions.includes(NAV_PERMISSION[item.key] || item.key) || (item.key === "settings" && permissions.includes("messaging"))).map(({ key, label, icon: Icon }) => {
-                  const active = key === activeNav;
+                  const isPatientsMenu = key === "patients";
+                  const active = isPatientsMenu ? PATIENT_NAV_KEYS.has(activeNav) : key === activeNav;
                   return (
                     <li key={key}>
                       <button
                         type="button"
                         aria-current={active ? "page" : undefined}
-                        aria-expanded={key === "settings" ? settingsExpanded : undefined}
-                        aria-controls={key === "settings" ? "tenant-settings-subnav" : undefined}
-                        onClick={() => key === "settings" ? setSettingsExpanded((current) => !current) : onNavigate?.(key)}
+                        aria-expanded={key === "settings" ? settingsExpanded : isPatientsMenu ? patientsExpanded : undefined}
+                        aria-controls={key === "settings" ? "tenant-settings-subnav" : isPatientsMenu ? "patient-management-subnav" : undefined}
+                        onClick={() => {
+                          if (key === "settings") setSettingsExpanded((current) => !current);
+                          else if (isPatientsMenu) setPatientsExpanded((current) => !current);
+                          else onNavigate?.(key);
+                        }}
                         className={`staff-settings-toggle ${
                           "flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors " +
                           (active
@@ -332,8 +352,20 @@ export function ClinicalDashboard({
                       >
                         <Icon size={16} aria-hidden="true" />
                         <span className="staff-nav-label">{label}</span>
-                        {key === "settings" && <ChevronDown size={14} className={`staff-settings-caret ${settingsExpanded ? "is-expanded" : ""}`} aria-hidden="true" />}
+                        {(key === "settings" || isPatientsMenu) && <ChevronDown size={14} className={`staff-settings-caret ${(key === "settings" ? settingsExpanded : patientsExpanded) ? "is-expanded" : ""}`} aria-hidden="true" />}
                       </button>
+                      {isPatientsMenu && patientsExpanded && (
+                        <ul id="patient-management-subnav" className="staff-settings-subnav ml-5 mt-1 border-l border-[var(--border)] pl-2">
+                          {PATIENT_SUBNAV.filter((item) => permissions.includes(NAV_PERMISSION[item.key] || item.key)).map(({ key: childKey, label: childLabel, icon: ChildIcon }) => (
+                            <li key={childKey}>
+                              <button type="button" aria-current={activeNav === childKey ? "page" : undefined} onClick={() => onNavigate?.(childKey)} className={`staff-nav-label flex w-full items-center gap-2 rounded-r-md px-2 py-1.5 text-left text-xs ${activeNav === childKey ? "font-semibold text-[var(--sage-deep)]" : "text-[var(--ink-muted)] hover:bg-[var(--paper)]"}`}>
+                                <ChildIcon size={14} aria-hidden="true" />
+                                {childLabel}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                       {key === "settings" && settingsExpanded && (
                         <ul id="tenant-settings-subnav" className="staff-settings-subnav ml-5 mt-1 border-l border-[var(--border)] pl-2">
                           {([
@@ -501,6 +533,7 @@ export function ClinicalDashboard({
       </div>
       <nav className="staff-mobile-nav" aria-label="Staff sections">
         {NAV_GROUPS.flatMap((group) => group.items)
+          .concat(PATIENT_SUBNAV.slice(1))
           .filter((item) => item.key === "dashboard" || permissions.includes(NAV_PERMISSION[item.key] || item.key))
           .map(({ key, label, icon: Icon }) => <button key={key} type="button" aria-current={key === activeNav ? "page" : undefined} onClick={() => onNavigate?.(key)}><Icon size={16} />{label}</button>)}
       </nav>

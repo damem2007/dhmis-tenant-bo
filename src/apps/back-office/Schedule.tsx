@@ -23,6 +23,7 @@ function localDateTime(value: string) {
 }
 
 export function Schedule({ patients, appointments, reference, refresh, run, busy }: Props) {
+  const preselectedPatient = new URLSearchParams(window.location.search).get('patient') || '';
   const [view, setView] = useState<ScheduleView>({
     type: 'create',
     locationId: reference.locations[0]?.id ?? '',
@@ -160,7 +161,7 @@ export function Schedule({ patients, appointments, reference, refresh, run, busy
         <form key={editing?.id ?? 'new'} className="panel space-y-3" onSubmit={handleSave}>
           <h2 className="font-semibold">{editing ? 'Reschedule appointment' : 'New appointment'}</h2>
           <Field label="Patient">
-            <select name="patient" className="field" required defaultValue={editing?.patient_id}>
+            <select name="patient" className="field" required defaultValue={editing?.patient_id || preselectedPatient || patients[0]?.id}>
               {patients.map((patient) => (
                 <option key={patient.id} value={patient.id}>{patient.first_name} {patient.last_name}</option>
               ))}

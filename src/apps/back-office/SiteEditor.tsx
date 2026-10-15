@@ -74,6 +74,7 @@ type CmsContent = {
   services: CmsService[];
   dentists: CmsDentist[];
   locations: CmsLocation[];
+  location_rotation_enabled?: boolean;
   media: CmsMedia[];
   testimonials_enabled: boolean;
   regulator_declaration: boolean;
@@ -487,6 +488,12 @@ export function SiteEditor({ tenant, user, reference }: { tenant: TenantContext;
           </>}
           {tab === 'hours' && <>
             <h1>Hours &amp; location</h1>
+            <article className="cms-edit-card">
+              <h2>Featured location in the website header</h2>
+              <p className="muted">Keep the first location static by default, or rotate through all active locations in the header card.</p>
+              <label className="cms-check"><input type="checkbox" checked={Boolean(content.location_rotation_enabled)} onChange={(event) => changeContent((draft) => { draft.location_rotation_enabled = event.target.checked; })} /> Rotate locations automatically</label>
+              <small className="muted">Visitors can pause the rotation or choose a location manually.</small>
+            </article>
             {content.locations.map((location, index) => <article className="cms-edit-card" key={location.location_id}>
               <label className="label">Location name<input className="field" value={location.name} onChange={(event) => changeContent((draft) => { draft.locations[index].name = event.target.value; })} /></label>
               <label className="label">Street address<input className="field" value={location.address} onChange={(event) => changeContent((draft) => { draft.locations[index].address = event.target.value; })} /></label>

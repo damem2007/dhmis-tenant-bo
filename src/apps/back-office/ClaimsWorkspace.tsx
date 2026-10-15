@@ -8,6 +8,7 @@ import type {
   InsurancePlan,
   Reference,
 } from "./types";
+import { DEFAULT_PAGE_SIZE, Pagination } from "./components/Pagination";
 export function ClaimsWorkspace({
   patients,
   invoices,
@@ -34,7 +35,7 @@ export function ClaimsWorkspace({
     page_size: number;
     total: number;
     items: Claim[];
-  }>({ page: 1, page_size: 25, total: 0, items: [] });
+  }>({ page: 1, page_size: DEFAULT_PAGE_SIZE, total: 0, items: [] });
   const [filters, setFilters] = useState({ status: "", patient_id: "", location_id: "" });
 
   async function loadClaims(page = 1, pageSize = claimPage.page_size) {
@@ -107,11 +108,10 @@ export function ClaimsWorkspace({
           <Field label="Status"><select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">All</option>{['submitted', 'adjudicated', 'paid', 'denied', 'appealed', 'review_required'].map((status) => <option key={status}>{status}</option>)}</select></Field>
           <Field label="Patient"><select className="field" value={filters.patient_id} onChange={(event) => setFilters((current) => ({ ...current, patient_id: event.target.value }))}><option value="">All</option>{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.first_name} {patient.last_name}</option>)}</select></Field>
           <Field label="Location"><select className="field" value={filters.location_id} onChange={(event) => setFilters((current) => ({ ...current, location_id: event.target.value }))}><option value="">All assigned</option>{reference.locations.map((location) => <option key={location.id} value={location.id}>{location.name}</option>)}</select></Field>
-          <Field label="Rows"><select className="field" value={claimPage.page_size} onChange={(event) => void loadClaims(1, Number(event.target.value))}>{[10, 25, 50, 100].map((size) => <option key={size}>{size}</option>)}</select></Field>
         </div>
         <div className="overflow-auto"><table><thead><tr><th>Created</th><th>Reference</th><th>Network</th><th>Status</th><th>Submitted</th></tr></thead><tbody>{claimPage.items.map((claim) => <tr key={claim.id}><td>{new Date(claim.created_at).toLocaleString()}</td><td>{claim.reference || claim.id}</td><td>{claim.network}</td><td>{claim.status}</td><td>{money(claim.submitted_cents)}</td></tr>)}</tbody></table></div>
         {!claimPage.items.length && <Empty>No claims match these filters.</Empty>}
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><button type="button" className="btn-secondary" disabled={claimPage.page <= 1} onClick={() => void loadClaims(claimPage.page - 1)}>Previous</button><span>{claimPage.total ? `${(claimPage.page - 1) * claimPage.page_size + 1}–${Math.min(claimPage.page * claimPage.page_size, claimPage.total)} of ${claimPage.total}` : '0 claims'}</span><button type="button" className="btn-secondary" disabled={claimPage.page * claimPage.page_size >= claimPage.total} onClick={() => void loadClaims(claimPage.page + 1)}>Next</button></div>
+        <Pagination page={claimPage.page} pageSize={claimPage.page_size} total={claimPage.total} label="claims" onPage={(next) => void loadClaims(next)} onPageSize={(size) => void loadClaims(1, size)} />
       </section>
       <div className="space-y-4">
         {invoices.map((invoice) => {

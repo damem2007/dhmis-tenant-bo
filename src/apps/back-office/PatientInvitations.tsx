@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './lib/api';
+import { DEFAULT_PAGE_SIZE, Pagination } from './components/Pagination';
 
 interface PatientInvitation {
   id: string;
@@ -19,7 +20,7 @@ interface Page<T> {
 }
 
 export function PatientInvitations() {
-  const [page, setPage] = useState<Page<PatientInvitation>>({ page: 1, page_size: 25, total: 0, items: [] });
+  const [page, setPage] = useState<Page<PatientInvitation>>({ page: 1, page_size: DEFAULT_PAGE_SIZE, total: 0, items: [] });
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [message, setMessage] = useState('');
@@ -55,9 +56,6 @@ export function PatientInvitations() {
     }
   }
 
-  const first = page.total === 0 ? 0 : (page.page - 1) * page.page_size + 1;
-  const last = Math.min(page.total, page.page * page.page_size);
-
   return (
     <section className="panel">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-xl font-semibold">Patient invitations</h1><p className="muted text-sm">Client Portal invitations issued by this organization.</p></div></div>
@@ -68,7 +66,7 @@ export function PatientInvitations() {
         <button className="btn-secondary self-end" disabled={busy}>Apply filters</button>
       </form>
       <div className="overflow-auto"><table><thead><tr><th>Patient</th><th>Recipient</th><th>Created</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{page.items.map((invitation) => <tr key={invitation.id}><td><strong>{invitation.recipient_name}</strong><p className="muted text-xs">{invitation.patient_id}</p></td><td>{invitation.email}</td><td>{new Date(invitation.created_at).toLocaleString()}</td><td>{new Date(invitation.expires * 1000).toLocaleString()}</td><td>{invitation.status}</td><td>{['pending', 'expired'].includes(invitation.status) && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void action(invitation.id, 'resend')}>Resend</button>} {invitation.status === 'pending' && <button type="button" className="btn-secondary ml-2" disabled={busy} onClick={() => void action(invitation.id, 'revoke')}>Revoke</button>}</td></tr>)}</tbody></table>{!page.items.length && <p className="muted p-4">No patient invitations match these filters.</p>}</div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>{first}–{last} of {page.total} patient invitations</span><div className="flex items-center gap-2"><label>Rows <select className="field inline-block w-auto" aria-label="Patient invitation rows per page" value={page.page_size} onChange={(event) => void load(1, Number(event.target.value))}>{[10, 25, 50, 100].map((size) => <option key={size}>{size}</option>)}</select></label><button type="button" className="btn-secondary" disabled={busy || page.page <= 1} onClick={() => void load(page.page - 1)}>Previous</button><span>Page {page.page}</span><button type="button" className="btn-secondary" disabled={busy || last >= page.total} onClick={() => void load(page.page + 1)}>Next</button></div></div>
+      <Pagination page={page.page} pageSize={page.page_size} total={page.total} label="patient invitations" busy={busy} onPage={(next) => void load(next)} onPageSize={(size) => void load(1, size)} />
     </section>
   );
 }

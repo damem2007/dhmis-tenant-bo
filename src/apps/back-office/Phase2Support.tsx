@@ -4,17 +4,11 @@ import { Field } from './components/Fields';
 
 type PatientChoice = { id: string; first_name: string; last_name: string };
 type DocumentRecord = { id: string; patient_id: string; filename: string; description: string; mime_type: string; comparison_group: string };
-type MessageThread = { id: string; patient_id: string; subject: string; status: string };
-type ThreadMessage = { id: string; sender_type: string; body: string; created_at: string };
 type SupportState = {
   selectedPatient: string;
   documents: DocumentRecord[];
-  threads: MessageThread[];
-  inviteToken: string;
   error: string;
   previews: Record<string, string>;
-  selectedThreadId: string;
-  selectedMessages: ThreadMessage[];
 };
 
 export function Phase2Support({
@@ -29,12 +23,8 @@ export function Phase2Support({
   const [state, setState] = useState<SupportState>({
     selectedPatient: patients[0]?.id || '',
     documents: [],
-    threads: [],
-    inviteToken: '',
     error: '',
     previews: {},
-    selectedThreadId: '',
-    selectedMessages: [],
   });
 
   function patchState(next: Partial<SupportState>) {
@@ -42,10 +32,7 @@ export function Phase2Support({
   }
 
   async function load(patientId = state.selectedPatient || patients[0]?.id || '') {
-    const [threads, documents] = await Promise.all([
-      api<MessageThread[]>('/messages'),
-      patientId ? api<DocumentRecord[]>(`/documents/${patientId}`) : Promise.resolve([]),
-    ]);
+    const documents = patientId ? await api<DocumentRecord[]>(`/documents/${patientId}`) : [];
     const previews = Object.fromEntries(
       await Promise.all(
         documents
@@ -54,19 +41,7 @@ export function Phase2Support({
       ),
     );
     setState((current) => {
-      return { ...current, threads, documents, selectedPatient: patientId, previews };
-    });
-  }
-
-  async function handleInvite(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await run(async () => {
-      const result = await api<{ token: string }>('/portal/invites', {
-        patient_id: form.get('patient_id'),
-        email: form.get('email'),
-      });
-      patchState({ inviteToken: result.token });
+      return { ...current, documents, selectedPatient: patientId, previews };
     });
   }
 
@@ -118,45 +93,8 @@ export function Phase2Support({
     }
   }
 
-  async function handleReply(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await run(async () => {
-      await api(`/messages/${form.get('thread_id')}/reply`, { body: form.get('body') });
-      await openThread(String(form.get('thread_id')));
-      await load();
-      event.currentTarget.reset();
-    });
-  }
-
-  async function openThread(threadId: string) {
-    const result = await api<{ thread: MessageThread; messages: ThreadMessage[] }>(`/messages/${threadId}`);
-    setState((current) => ({
-      ...current,
-      threads: current.threads.some((thread) => thread.id === result.thread.id)
-        ? current.threads
-        : [result.thread, ...current.threads],
-      selectedThreadId: threadId,
-      selectedMessages: result.messages,
-    }));
-  }
-
   useEffect(() => {
     void load().catch((reason) => patchState({ error: reason.message }));
-  }, []);
-
-  useEffect(() => {
-    const threadId = new URLSearchParams(window.location.search).get('thread');
-    if (threadId) void openThread(threadId).catch((reason) => patchState({ error: reason.message }));
-  }, []);
-
-  useEffect(() => {
-    const handleNotification = (event: Event) => {
-      const threadId = (event as CustomEvent<{ threadId?: string }>).detail?.threadId;
-      if (threadId) void openThread(threadId).catch((reason) => patchState({ error: reason.message }));
-    };
-    window.addEventListener('dhmis:open-message', handleNotification);
-    return () => window.removeEventListener('dhmis:open-message', handleNotification);
   }, []);
 
   useEffect(
@@ -173,18 +111,18 @@ export function Phase2Support({
 
   return (
     <section className="mt-5 space-y-5">
-      <h2 className="text-xl font-semibold">Phase 2 patient services</h2>
+      <div>
+        <h2 className="text-xl font-semibold">Caseflow patient services</h2>
+        <p className="muted mt-1 text-sm">Phase 2 supports structured intake forms and patient documents. Portal access and invitations are managed from Patients and Patient invitations.</p>
+      </div>
       {state.error && <p role="alert">{state.error}</p>}
       <div className="grid gap-5 xl:grid-cols-2">
-        <div className="panel space-y-5">
-          <form className="space-y-3" onSubmit={handleInvite}>
-            <h3 className="font-semibold">Client Portal invitation</h3>
-            <Field label="Patient"><select className="field" name="patient_id">{patients.map((patient) => <option key={patient.id} value={patient.id}>{patient.first_name} {patient.last_name}</option>)}</select></Field>
-            <Field label="Email"><input className="field" name="email" type="email" required /></Field>
-            <button className="btn-secondary" disabled={busy}>Create invitation</button>
-            {state.inviteToken && <p className="break-all text-sm"><strong>One-time token:</strong> {state.inviteToken}</p>}
-          </form>
-          <form className="space-y-3 border-t border-[var(--border)] pt-4" onSubmit={handleTemplate}>
+        <div className="panel">
+          <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--paper)] p-3 text-sm">
+            <strong>What Phase 2 does</strong>
+            <p className="muted mt-1">Create versioned intake templates and attach documents or images to a patient record. Comparison groups can show before-and-after case media.</p>
+          </div>
+          <form className="space-y-3" onSubmit={handleTemplate}>
             <h3 className="font-semibold">Versioned intake form</h3>
             <Field label="Title"><input className="field" name="title" required /></Field>
             <Field label="Version"><input className="field" name="version" required /></Field>
@@ -207,17 +145,6 @@ export function Phase2Support({
           {Object.entries(comparisons).map(([group, documents]) => documents.length > 1 && <div key={group} className="mt-4"><p className="mb-2 text-sm font-medium">Before/after · {group}</p><div className="grid grid-cols-2 gap-2">{documents.slice(0, 2).map((document) => <figure key={document.id}><img className="aspect-square w-full rounded-lg object-cover" src={state.previews[document.id]} alt={document.description || document.filename} /><figcaption className="mt-1 text-xs">{document.description || document.filename}</figcaption></figure>)}</div></div>)}
         </div>
 
-        <div className="panel">
-          <h3 className="mb-3 font-semibold">Secure patient messages</h3>
-          {!state.threads.length && <p className="text-sm text-[var(--ink-muted)]">No patient messages yet.</p>}
-          {state.threads.map((thread) => <div key={thread.id} className={`mb-3 rounded-lg border p-3 text-sm ${state.selectedThreadId === thread.id ? 'border-[var(--sage)] bg-[var(--sage-tint)]' : 'border-[var(--border)]'}`}>
-            <button type="button" className="w-full text-left" onClick={() => void openThread(thread.id)}><strong>{thread.subject}</strong><p>{thread.status}</p></button>
-            {state.selectedThreadId === thread.id && <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-3">
-              {state.selectedMessages.map((message) => <p key={message.id} className="rounded-md bg-[var(--surface)] p-2"><strong>{message.sender_type === 'patient' ? 'Patient' : 'Clinic'}:</strong> {message.body}</p>)}
-              <form className="flex gap-2" onSubmit={handleReply}><input type="hidden" name="thread_id" value={thread.id} /><input className="field" name="body" placeholder="Reply" required /><button className="btn-secondary" disabled={busy}>Send</button></form>
-            </div>}
-          </div>)}
-        </div>
       </div>
     </section>
   );

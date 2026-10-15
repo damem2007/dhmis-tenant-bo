@@ -3,11 +3,13 @@ export type NavKey =
   | "schedule"
   | "patients"
   | "patient-invitations"
+  | "patient-communication"
   | "care"
   | "billing"
   | "claims"
   | "reports"
   | "operations"
+  | "locations"
   | "staff"
   | "site"
   | "services"
@@ -28,11 +30,13 @@ export const NAV_PATHS: Record<NavKey, string> = {
   schedule: "schedule",
   patients: "patients",
   "patient-invitations": "patients/invitations",
+  "patient-communication": "patients/communication",
   care: "care",
   billing: "billing",
   claims: "claims",
   reports: "reports",
   operations: "operations",
+  locations: "locations",
   staff: "staff",
   site: "site-editor",
   services: "services",
@@ -53,6 +57,7 @@ const SETTINGS_SECTIONS: TenantSettingsSection[] = [
 export function navFromPath(slug: string, pathname = window.location.pathname): NavKey {
   if (pathname.replace(new RegExp(`^/${slug}/admin/?`), "").startsWith("settings/services")) return "services";
   const tail = pathname.replace(new RegExp(`^/${slug}/admin/?`), "").split("/")[0];
+  if (pathname.replace(new RegExp(`^/${slug}/admin/?`), "").startsWith("patients/communication")) return "patient-communication";
   if (pathname.replace(new RegExp(`^/${slug}/admin/?`), "").startsWith("patients/invitations")) return "patient-invitations";
   return (Object.entries(NAV_PATHS).find(([, path]) => path === tail)?.[0] as NavKey | undefined) || "dashboard";
 }

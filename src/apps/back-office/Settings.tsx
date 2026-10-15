@@ -4,6 +4,7 @@ import { Field, Title } from './components/Fields';
 import { RolesAccess } from './components/RolesAccess';
 import { NotificationCenter } from './NotificationCenter';
 import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
+import { DEFAULT_PAGE_SIZE, Pagination } from './components/Pagination';
 import type { Audit, Reference, User } from './types';
 
 interface SettingsData {
@@ -173,18 +174,8 @@ function AccessPager({ page, busy, label, onPage, onPageSize }: {
   onPage: (page: number) => void;
   onPageSize: (pageSize: number) => void;
 }) {
-  const first = page.total === 0 ? 0 : (page.page - 1) * page.page_size + 1;
-  const last = Math.min(page.total, page.page * page.page_size);
   return (
-    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm">
-      <span>{first}–{last} of {page.total} {label}</span>
-      <div className="flex items-center gap-2">
-        <label>Rows <select className="field inline-block w-auto" aria-label={`${label} rows per page`} value={page.page_size} onChange={(event) => onPageSize(Number(event.target.value))}>{[10, 25, 50, 100].map((size) => <option key={size}>{size}</option>)}</select></label>
-        <button type="button" className="btn-secondary" disabled={busy || page.page <= 1} onClick={() => onPage(page.page - 1)}>Previous</button>
-        <span>Page {page.page}</span>
-        <button type="button" className="btn-secondary" disabled={busy || last >= page.total} onClick={() => onPage(page.page + 1)}>Next</button>
-      </div>
-    </div>
+    <Pagination page={page.page} pageSize={page.page_size} total={page.total} label={label} busy={busy} onPage={onPage} onPageSize={onPageSize} />
   );
 }
 
@@ -225,10 +216,10 @@ function TemplateEditor({ templateKey, template, busy, onSave, onTest }: {
 
 export function Settings({ user, reference, audit, patients, refresh, run, busy, refreshAudit, basePath, activeSection: requestedSection, onSectionChange }: Props) {
   const [view, setView] = useState<SettingsView>({ type: 'loading' });
-  const [auditPage, setAuditPage] = useState({ page: 1, page_size: 25, total: audit.length, items: audit });
+  const [auditPage, setAuditPage] = useState({ page: 1, page_size: DEFAULT_PAGE_SIZE, total: audit.length, items: audit });
   const [auditFilters, setAuditFilters] = useState<AuditFilters>(emptyAuditFilters);
-  const [staffPage, setStaffPage] = useState<Page<Staff>>({ page: 1, page_size: 25, total: 0, items: [] });
-  const [invitationPage, setInvitationPage] = useState<Page<Invitation>>({ page: 1, page_size: 25, total: 0, items: [] });
+  const [staffPage, setStaffPage] = useState<Page<Staff>>({ page: 1, page_size: DEFAULT_PAGE_SIZE, total: 0, items: [] });
+  const [invitationPage, setInvitationPage] = useState<Page<Invitation>>({ page: 1, page_size: DEFAULT_PAGE_SIZE, total: 0, items: [] });
   const [staffFilters, setStaffFilters] = useState<AccessFilters>(() => ({ ...emptyAccessFilters, role: new URLSearchParams(window.location.search).get('role') || '' }));
   const [invitationFilters, setInvitationFilters] = useState<AccessFilters>(emptyAccessFilters);
   const [selectedTemplateKey, setSelectedTemplateKey] = useState('appointment-reminder');

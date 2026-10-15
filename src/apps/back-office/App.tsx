@@ -1,22 +1,25 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Calendar, ShieldCheck, Users, Wallet } from 'lucide-react';
 import ClinicalDashboard from './ClinicalDashboard';
 import { NAV_PATHS, navFromPath, settingsSectionFromPath, type NavKey, type TenantSettingsSection } from './navigation';
-import { Patients } from './Patients';
-import { PatientInvitations } from './PatientInvitations';
-import { Schedule } from './Schedule';
-import { Billing } from './Billing';
-import { Auth } from './Auth';
-import { Settings } from './Settings';
-import { Phase3Care } from './Phase3Care';
-import { Reports } from './Reports';
-import { Operations } from './Operations';
-import { RoleDashboard } from './RoleDashboard';
-import { Account } from './Account';
+const Patients = lazy(() => import('./Patients').then(({ Patients }) => ({ default: Patients })));
+const PatientInvitations = lazy(() => import('./PatientInvitations').then(({ PatientInvitations }) => ({ default: PatientInvitations })));
+const PatientCommunication = lazy(() => import('./PatientCommunication').then(({ PatientCommunication }) => ({ default: PatientCommunication })));
+const Schedule = lazy(() => import('./Schedule').then(({ Schedule }) => ({ default: Schedule })));
+const Billing = lazy(() => import('./Billing').then(({ Billing }) => ({ default: Billing })));
+const Auth = lazy(() => import('./Auth').then(({ Auth }) => ({ default: Auth })));
+const Settings = lazy(() => import('./Settings').then(({ Settings }) => ({ default: Settings })));
+const Phase3Care = lazy(() => import('./Phase3Care').then(({ Phase3Care }) => ({ default: Phase3Care })));
+const Reports = lazy(() => import('./Reports').then(({ Reports }) => ({ default: Reports })));
+const Operations = lazy(() => import('./Operations').then(({ Operations }) => ({ default: Operations })));
+const Locations = lazy(() => import('./Locations').then(({ Locations }) => ({ default: Locations })));
+const RoleDashboard = lazy(() => import('./RoleDashboard').then(({ RoleDashboard }) => ({ default: RoleDashboard })));
+const Account = lazy(() => import('./Account').then(({ Account }) => ({ default: Account })));
 import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
-import { SiteEditor } from './SiteEditor';
-import { ServiceCatalogue } from './ServiceCatalogue';
-import { Phase2Support } from './Phase2Support';
+const SiteEditor = lazy(() => import('./SiteEditor').then(({ SiteEditor }) => ({ default: SiteEditor })));
+const ServiceCatalogue = lazy(() => import('./ServiceCatalogue').then(({ ServiceCatalogue }) => ({ default: ServiceCatalogue })));
+const Phase2Support = lazy(() => import('./Phase2Support').then(({ Phase2Support }) => ({ default: Phase2Support })));
+import { ToastHost } from './components/Toast';
 import type { ApprovalNotification } from './components/ApprovalBell';
 import { api, hasToken, money, setActiveLocation, setToken } from './lib/api';
 import { isSandboxEnvironment } from './lib/environment';
@@ -28,6 +31,7 @@ import type {
   Dashboard,
   Invoice,
   Patient,
+  PatientPage,
   Reference,
   Service,
   User,
@@ -41,6 +45,25 @@ type WorkspaceData = {
   claims: Claim[];
   dashboard: Dashboard;
   reference: Reference;
+  entitlements: Record<string, { enabled?: boolean; unlimited?: boolean; value?: number | null; name?: string }>;
+};
+
+const EMPTY_WORKSPACE: WorkspaceData = {
+  patients: [],
+  appointments: [],
+  invoices: [],
+  services: [],
+  claims: [],
+  dashboard: {
+    location_name: '',
+    date_label: '',
+    patient_count: 0,
+    balance_cents: null,
+    pending_claims: null,
+    schedule: [],
+  },
+  reference: { locations: [], providers: [] },
+  entitlements: {},
 };
 
 function tenantWebOrigin() {
@@ -76,7 +99,6 @@ const initialUi: UiState = {
 export default function App({ tenant }: { tenant: TenantContext }) {
   const [user, setUser] = useState<User | null>(null);
   const [data, setData] = useState<WorkspaceData | null>(null);
-  const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [sessionRestoring, setSessionRestoring] = useState(() => hasToken());
   const [ui, setUi] = useState<UiState>(() => ({ ...initialUi, nav: navFromPath(tenant.slug), settingsSection: settingsSectionFromPath(tenant.slug) }));
 
@@ -98,25 +120,49 @@ export default function App({ tenant }: { tenant: TenantContext }) {
     setUi(initialUi);
   }, []);
 
+  const loadCriticalWorkspace = useCallback(async () => {
+    // Dashboard data is the only request needed to populate the first view.
+    // Resolve it independently so a slow reference catalogue cannot hold the
+    // shell or the dashboard metrics behind a combined Promise.all.
+    const dashboard = await api<Dashboard>('/dashboard');
+    setData((current) => ({ ...(current || EMPTY_WORKSPACE), dashboard }));
+    void api<Reference>('/organization/reference')
+      .then((reference) => setData((current) => ({ ...(current || EMPTY_WORKSPACE), reference })))
+      .catch((reason) => patchUi({ error: reason instanceof Error ? reason.message : 'Practice reference data could not be loaded' }));
+    return dashboard;
+  }, [patchUi]);
+
+  const loadSecondaryWorkspace = useCallback(async (current: User) => {
+    const [patients, appointments, invoices, services, claims, entitlementResponse] = await Promise.all([
+      current.permissions.includes('patients')
+        ? api<PatientPage | Patient[]>('/patients?page=1&page_size=1000').then((result) => Array.isArray(result) ? result : result.items)
+        : current.permissions.includes('messaging')
+          ? api<Patient[]>('/messages/patients')
+          : Promise.resolve([]),
+      current.permissions.includes('scheduling') ? api<Appointment[]>('/appointments') : Promise.resolve([]),
+      current.permissions.includes('billing') ? api<Invoice[]>('/billing/invoices') : Promise.resolve([]),
+      api<Service[]>('/billing/catalog'),
+      current.permissions.includes('claims') ? api<Claim[]>('/claims') : Promise.resolve([]),
+      api<{ entitlements: Record<string, { enabled?: boolean; unlimited?: boolean; value?: number | null; name?: string }> }>('/organization/entitlements'),
+    ]);
+    setData((existing) => ({
+      ...(existing || EMPTY_WORKSPACE),
+      patients,
+      appointments,
+      invoices,
+      services,
+      claims,
+      entitlements: entitlementResponse.entitlements,
+    }));
+  }, []);
+
   const refresh = useCallback(
-    async (current: User | null = user) => {
-      const [patients, appointments, invoices, services, claims, dashboard, reference] =
-        await Promise.all([
-          current?.permissions.includes('patients') ? api<Patient[]>('/patients') : Promise.resolve([]),
-          current?.permissions.includes('scheduling')
-            ? api<Appointment[]>('/appointments')
-            : Promise.resolve([]),
-          current?.permissions.includes('billing')
-            ? api<Invoice[]>('/billing/invoices')
-            : Promise.resolve([]),
-          api<Service[]>('/billing/catalog'),
-          current?.permissions.includes('claims') ? api<Claim[]>('/claims') : Promise.resolve([]),
-          api<Dashboard>('/dashboard'),
-          api<Reference>('/organization/reference'),
-        ]);
-      setData({ patients, appointments, invoices, services, claims, dashboard, reference });
+      async (current: User | null = user) => {
+      if (!current) return;
+      await loadCriticalWorkspace();
+      await loadSecondaryWorkspace(current);
     },
-    [user],
+    [loadCriticalWorkspace, loadSecondaryWorkspace, user],
   );
 
   const run = useCallback(
@@ -136,23 +182,26 @@ export default function App({ tenant }: { tenant: TenantContext }) {
 
   const refreshAudit = useCallback(
     async (patientId = '') => {
-      const suffix = patientId ? `?patient_id=${encodeURIComponent(patientId)}` : '';
-      patchUi({ audit: await api<Audit[]>(`/organization/audit${suffix}`) });
+      const query = new URLSearchParams({ page: '1', page_size: '25' });
+      if (patientId) query.set('patient_id', patientId);
+      const result = await api<{ items: Audit[] }>(`/organization/audit/query?${query}`);
+      patchUi({ audit: result.items });
     },
     [patchUi],
   );
 
   async function handleAuthenticated() {
-    setWorkspaceLoading(true);
-    try {
-      const current = await api<User>('/auth/me');
-      setActiveLocation(current.selected_location_id || '');
-      applyBranding(current.branding);
-      await refresh(current);
-      setUser(current);
-    } finally {
-      setWorkspaceLoading(false);
-    }
+    const current = await api<User>('/auth/me');
+    setActiveLocation(current.selected_location_id || '');
+    applyBranding(current.branding);
+    // Publish the authenticated shell before dashboard/reference hydration.
+    // Those APIs fill the page sections independently and must not hold the
+    // entire workspace behind the branded full-screen loader.
+    setUser(current);
+    setData(EMPTY_WORKSPACE);
+    void loadCriticalWorkspace()
+      .then(() => loadSecondaryWorkspace(current))
+      .catch((reason) => patchUi({ error: reason instanceof Error ? reason.message : 'Workspace data could not be loaded' }));
   }
 
   useEffect(() => {
@@ -223,7 +272,7 @@ export default function App({ tenant }: { tenant: TenantContext }) {
 
   function openNotification(item: ApprovalNotification) {
     if (!item.thread_id) return;
-    navigate('care');
+    navigate('patient-communication');
     window.setTimeout(() => window.dispatchEvent(new CustomEvent('dhmis:open-message', { detail: { threadId: item.thread_id } })), 0);
   }
 
@@ -252,7 +301,7 @@ export default function App({ tenant }: { tenant: TenantContext }) {
     }
   }, [ui.nav, user, refreshAudit, patchUi]);
 
-  if (!user) return <>{!sessionRestoring && <Auth tenant={tenant} onAuthenticated={handleAuthenticated} />}{(sessionRestoring || workspaceLoading) && <WorkspaceLoadingOverlay />}</>;
+  if (!user) return <Suspense fallback={<WorkspaceLoadingOverlay />}><>{!sessionRestoring && <Auth tenant={tenant} onAuthenticated={handleAuthenticated} />}{sessionRestoring && <WorkspaceLoadingOverlay />}</></Suspense>;
   if (!data) return <WorkspaceLoadingOverlay />;
   const currentUser = user;
   const workspace = data;
@@ -273,6 +322,16 @@ export default function App({ tenant }: { tenant: TenantContext }) {
         return <Patients {...workspaceProps} query={ui.query} />;
       case 'patient-invitations':
         return <PatientInvitations />;
+      case 'patient-communication':
+        return (
+          <PatientCommunication
+            patients={workspace.patients}
+            locations={workspace.reference.locations}
+            run={run}
+            busy={ui.busy}
+            permissions={currentUser.permissions}
+          />
+        );
       case 'schedule':
         return <Schedule {...workspaceProps} />;
       case 'care':
@@ -284,7 +343,9 @@ export default function App({ tenant }: { tenant: TenantContext }) {
       case 'reports':
         return <Reports reference={workspace.reference} />;
       case 'operations':
-        return <Operations reference={workspace.reference} permissions={currentUser.permissions} run={run} busy={ui.busy} refreshReference={() => refresh()} />;
+        return <Operations reference={workspace.reference} permissions={currentUser.permissions} run={run} busy={ui.busy} />;
+      case 'locations':
+        return <Locations reference={workspace.reference} entitlements={workspace.entitlements} permissions={currentUser.permissions} run={run} busy={ui.busy} refreshReference={() => refresh()} />;
       case 'site':
         return <SiteEditor tenant={tenant} user={currentUser} reference={workspace.reference} />;
       case 'services':
@@ -315,6 +376,7 @@ export default function App({ tenant }: { tenant: TenantContext }) {
 
   return (
     <>
+      <ToastHost message={ui.notice} error={ui.error} onDismiss={() => patchUi({ notice: '', error: '' })} />
       {(isSandboxEnvironment || ui.error || ui.notice || assignedLocations.length > 1) && <div className="staff-sandbox">
         <div className="staff-sandbox-main">
           {isSandboxEnvironment && <><strong>Development sandbox</strong><span> · Synthetic records · no live payments, claims, or signatures</span></>}
@@ -364,7 +426,9 @@ export default function App({ tenant }: { tenant: TenantContext }) {
           { label: 'Outstanding balance', value: workspace.dashboard.balance_cents === null ? '—' : money(workspace.dashboard.balance_cents), deltaPct: 0, icon: Wallet, hue: 'violet' },
         ]}
       >
-        {renderWorkspace()}
+        <Suspense fallback={<div className="min-h-[24rem] p-8"><WorkspaceLoadingOverlay /></div>}>
+          {renderWorkspace()}
+        </Suspense>
       </ClinicalDashboard>
     </>
   );

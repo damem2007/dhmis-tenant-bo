@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { api } from '../lib/api';
+import { WorkspaceLoadingOverlay } from '../WorkspaceLoadingOverlay';
+import { DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS, Pagination } from './Pagination';
 
 type Domain = 'tenant' | 'platform';
 type Page<T> = { page: number; size: number; total: number; pages: number; items: T[] };
@@ -18,7 +20,7 @@ type ResourceGroup = { key: string; name: string; permissions: Permission[] };
 type ModuleGroup = { key: string; name: string; resources: ResourceGroup[] };
 type EffectivePerson = { id: string; name: string; email?: string; role?: string; assignments?: { role: string; scope: string; location_id: string | null }[] };
 
-const emptyPage = <T,>(): Page<T> => ({ page: 1, size: 10, total: 0, pages: 0, items: [] });
+const emptyPage = <T,>(): Page<T> => ({ page: 1, size: DEFAULT_PAGE_SIZE, total: 0, pages: 0, items: [] });
 const tone = (status: string) => status === 'published' || status === 'approved' || status === 'applied' ? 'good' : status === 'pending' ? 'info' : status === 'rejected' || status === 'conflicted' ? 'danger' : 'neutral';
 const baseActions = new Set(['read', 'create', 'update']);
 const actionLabel = (action: string) => action.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -115,13 +117,13 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
   const [effectivePersonId, setEffectivePersonId] = useState('');
   const [requests, setRequests] = useState<Page<ChangeRequest>>(emptyPage());
   const [requestPage, setRequestPage] = useState(1);
-  const [requestSize, setRequestSize] = useState(10);
+  const [requestSize, setRequestSize] = useState(DEFAULT_PAGE_SIZE);
   const [history, setHistory] = useState<Page<History>>(emptyPage());
   const [policy, setPolicy] = useState<PolicyData | null>(null);
   const [policyDraft, setPolicyDraft] = useState<ApprovalSettings | null>(null);
   const [ruleDrafts, setRuleDrafts] = useState<FourEyesRule[]>([]);
   const [policyPage, setPolicyPage] = useState(1);
-  const [policySize, setPolicySize] = useState(10);
+  const [policySize, setPolicySize] = useState(DEFAULT_PAGE_SIZE);
   const [policyReason, setPolicyReason] = useState('');
   const [ruleReason, setRuleReason] = useState('');
   const [dragRuleId, setDragRuleId] = useState('');
@@ -129,10 +131,15 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
   const [draftGrants, setDraftGrants] = useState<Record<string, Grant>>({});
   const [search, setSearch] = useState('');
   const permissionRequest = useRef(0);
+  const catalogueRequest = useRef(0);
+  const catalogueMeta = useRef({ pages: 0, size: DEFAULT_PAGE_SIZE });
+  const catalogueHydrated = useRef(false);
+  const catalogueHydrating = useRef(false);
   const [permissionFilter, setPermissionFilter] = useState<'all' | 'granted' | 'high' | 'fourEyes' | 'changed'>('all');
   const [permissionPage, setPermissionPage] = useState(1);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [newRoleOpen, setNewRoleOpen] = useState(false);
   const [checkKey, setCheckKey] = useState('');
   const [checkUser, setCheckUser] = useState('');
@@ -156,12 +163,15 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
     setCheckUser('');
     setDecision(null);
     setCatalogue([]);
+    catalogueMeta.current = { pages: 0, size: DEFAULT_PAGE_SIZE };
+    catalogueHydrated.current = false;
+    catalogueHydrating.current = false;
     setEffectivePeople([]);
     setMessage('');
   }
 
   async function loadRoles(preferredId = selectedId) {
-    const result = await api<Page<Role>>(`${prefix}/roles?page=1&size=50`);
+    const result = await api<Page<Role>>(`${prefix}/roles?page=1&size=${DEFAULT_PAGE_SIZE}`);
     const items = domain === 'tenant' ? [...result.items].sort((left, right) => (
       right.user_count - left.user_count
       || Number(right.locked) - Number(left.locked)
@@ -175,7 +185,7 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
   }
   async function loadPermissions(page = permissionPage) {
     const requestId = ++permissionRequest.current;
-    const query = new URLSearchParams({ domain, page: String(page), size: '50' });
+    const query = new URLSearchParams({ domain, page: String(page), size: String(DEFAULT_PAGE_SIZE) });
     if (search) query.set('search', search);
     const result = await api<Page<Permission>>(`${prefix}/permissions?${query}`);
     if (requestId !== permissionRequest.current) return;
@@ -183,23 +193,57 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
     setPermissionPage(page);
   }
   async function loadPermissionRows(filters: Record<string, string>) {
-    const firstQuery = new URLSearchParams({ domain, page: '1', size: '50', ...filters });
+    const firstQuery = new URLSearchParams({ domain, page: '1', size: String(DEFAULT_PAGE_SIZE), ...filters });
     const first = await api<Page<Permission>>(`${prefix}/permissions?${firstQuery}`);
     const rows = [...first.items];
     for (let page = 2; page <= first.pages; page += 1) {
-      const query = new URLSearchParams({ domain, page: String(page), size: '50', ...filters });
+      const query = new URLSearchParams({ domain, page: String(page), size: String(DEFAULT_PAGE_SIZE), ...filters });
       rows.push(...(await api<Page<Permission>>(`${prefix}/permissions?${query}`)).items);
     }
     return rows;
   }
-  async function loadCatalogue() { setCatalogue(await loadPermissionRows({})); }
+  async function loadCatalogue(loadAll = false) {
+    if (loadAll && (catalogueHydrated.current || catalogueHydrating.current)) return;
+    if (loadAll && catalogueMeta.current.pages > 1) {
+      catalogueHydrating.current = true;
+      const requestId = ++catalogueRequest.current;
+      const { pages, size } = catalogueMeta.current;
+      window.setTimeout(() => {
+        void (async () => {
+          for (let page = 2; page <= pages; page += 1) {
+            const query = new URLSearchParams({ domain, page: String(page), size: String(size) });
+            const result = await api<Page<Permission>>(`${prefix}/permissions?${query}`);
+            if (requestId !== catalogueRequest.current) return;
+            setCatalogue((current) => {
+              const known = new Set(current.map((permission) => permission.key));
+              return [...current, ...result.items.filter((permission) => !known.has(permission.key))];
+            });
+          }
+          if (requestId === catalogueRequest.current) {
+            catalogueHydrated.current = true;
+            catalogueHydrating.current = false;
+          }
+        })().catch(() => { if (requestId === catalogueRequest.current) catalogueHydrating.current = false; });
+      }, 0);
+      return;
+    }
+    const requestId = ++catalogueRequest.current;
+    const firstQuery = new URLSearchParams({ domain, page: '1', size: String(DEFAULT_PAGE_SIZE) });
+    const first = await api<Page<Permission>>(`${prefix}/permissions?${firstQuery}`);
+    if (requestId !== catalogueRequest.current) return;
+    catalogueMeta.current = { pages: first.pages, size: first.size || DEFAULT_PAGE_SIZE };
+    catalogueHydrated.current = first.pages <= 1;
+    setCatalogue(first.items);
+    if (!loadAll || first.pages <= 1) return;
+    window.setTimeout(() => { void loadCatalogue(true); }, 0);
+  }
   async function loadEffectivePeople() {
     try {
       if (domain === 'tenant') {
-        const result = await api<{ items: EffectivePerson[] }>(`${prefix === '/rbac' ? '/organization/access/query' : '/platform/access/query'}?kind=staff&page=1&page_size=100`);
+        const result = await api<{ items: EffectivePerson[] }>(`${prefix === '/rbac' ? '/organization/access/query' : '/platform/access/query'}?kind=staff&page=1&page_size=${DEFAULT_PAGE_SIZE}`);
         setEffectivePeople(result.items || []);
       } else {
-        const result = await api<{ items: EffectivePerson[] }>(`/platform/access/query?page=1&page_size=100`);
+        const result = await api<{ items: EffectivePerson[] }>(`/platform/access/query?page=1&page_size=${DEFAULT_PAGE_SIZE}`);
         setEffectivePeople(result.items || []);
       }
     } catch { setEffectivePeople([]); }
@@ -210,20 +254,41 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
     catch { setCurrentActor(null); }
   }
   async function loadRequests(page = requestPage, size = requestSize) { const result = await api<Page<ChangeRequest>>(`${prefix}/requests?page=${page}&size=${size}`); setRequests(result); setRequestPage(result.page); setRequestSize(result.size); }
-  async function loadHistory() { setHistory(await api<Page<History>>(`${prefix}/history?page=1&size=25`)); }
+  async function loadHistory() { setHistory(await api<Page<History>>(`${prefix}/history?page=1&size=${DEFAULT_PAGE_SIZE}`)); }
   async function loadPolicy(page = policyPage, size = policySize) {
     const result = await api<PolicyData>(`${prefix}/policy?page=${page}&size=${size}`);
-    const full = page === 1 && size === 50 ? result : await api<PolicyData>(`${prefix}/policy?page=1&size=50`);
+    const full = page === 1 && size === DEFAULT_PAGE_SIZE ? result : await api<PolicyData>(`${prefix}/policy?page=1&size=${DEFAULT_PAGE_SIZE}`);
     setPolicy(result); setPolicyDraft(result.settings); setRuleDrafts(full.rules.items); setPolicyPage(page); setPolicySize(size);
   }
   async function refresh() {
     setBusy(true);
+    setLoading(true);
     setMessage('');
-    try { await Promise.all([loadRoles(), loadPermissions(), loadCatalogue(), loadEffectivePeople(), loadCurrentActor(), loadRequests(), loadHistory(), loadPolicy()]); }
-    catch (error) { setMessage(error instanceof Error ? error.message : 'Roles and access could not be loaded'); }
-    finally { setBusy(false); }
+    try {
+      // Only the role list, visible permission page, and first catalogue page
+      // gate the initial render. Secondary tabs hydrate after the roles view
+      // is usable instead of holding the whole screen behind every request.
+      await Promise.all([loadRoles(), loadPermissions(), loadCatalogue()]);
+      setLoading(false);
+      setBusy(false);
+      void Promise.all([
+        loadEffectivePeople(),
+        loadCurrentActor(),
+        loadRequests(),
+        loadHistory(),
+        loadPolicy(),
+      ]).catch((error) => setMessage(error instanceof Error ? error.message : 'Roles and access could not be loaded'));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Roles and access could not be loaded');
+      setBusy(false);
+      setLoading(false);
+    }
   }
   useEffect(() => { void refresh(); }, [activeDomain]);
+  useEffect(() => {
+    if (loading || !['compare', 'effective'].includes(tab) || catalogueHydrated.current) return;
+    void loadCatalogue(true);
+  }, [loading, tab]);
   useEffect(() => {
     if (tab !== 'approvals') return;
     void api(`${prefix}/notifications/seen`, {})
@@ -414,6 +479,8 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
     await act(async () => { await api(`${prefix}/four-eyes-rules`, { rules: normalizedRules(ruleDrafts).map(({ matches: _matches, governed: _governed, overlaps: _overlaps, ...rule }) => rule), reason: ruleReason }, 'PUT'); setRuleReason(''); await loadRequests(); setTab('approvals'); });
   }
 
+  if (loading) return <WorkspaceLoadingOverlay label="Loading roles and permissions" />;
+
   return <section className="rbac-page" aria-busy={busy}>
     <div className="prototype-page-header rbac-page-header">
       <div>
@@ -505,7 +572,7 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
         <p className="muted">{request.affected_users >= 0 ? `Affects ${request.affected_users} user${request.affected_users === 1 ? '' : 's'}` : 'Affected users unavailable'} · {request.decisions.length} of {request.required_approvals} approval{request.required_approvals === 1 ? '' : 's'}</p>
         {request.status === 'pending' && <><input className="field rbac-comment" value={comment} onChange={(event) => setApprovalComments((current) => ({ ...current, [request.id]: event.target.value }))} placeholder="Comment (required to reject)" /><div className="rbac-approval-actions"><button className="btn" type="button" disabled={busy || !canDecide} onClick={() => void requestAction(request, 'approve', comment)}>Approve</button><button className="btn-secondary" type="button" disabled={busy || !canDecide || comment.trim().length < 5} onClick={() => void requestAction(request, 'reject', comment)}>Reject</button><button className="btn-secondary" type="button" disabled={busy || !canWithdraw} onClick={() => void requestAction(request, 'withdraw', comment)}>Withdraw</button></div><p className="rbac-approval-hint">{eligibilityHint}</p></>}
       </article>;
-    })}{!requests.items.length && <section className="panel rbac-empty-approval"><div className="rbac-empty-approval-grid"><strong>Request</strong><strong>Maker / reason</strong><strong>Risk</strong><strong>Expires</strong><strong>Status</strong><strong>Actions</strong></div><p className="muted">No approval requests.</p></section>}<div className="prototype-pagination rbac-request-pagination"><label className="label">Rows<select className="field" value={requestSize} onChange={(event) => void loadRequests(1, Number(event.target.value))}><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option></select></label><span>Page {requests.page} of {requests.pages || 1} · {requests.total} requests</span><button className="btn-secondary" disabled={requests.page <= 1} onClick={() => void loadRequests(requests.page - 1, requestSize)}>Previous</button><button className="btn-secondary" disabled={requests.page >= requests.pages} onClick={() => void loadRequests(requests.page + 1, requestSize)}>Next</button></div></section></section>}
+    })}{!requests.items.length && <section className="panel rbac-empty-approval"><div className="rbac-empty-approval-grid"><strong>Request</strong><strong>Maker / reason</strong><strong>Risk</strong><strong>Expires</strong><strong>Status</strong><strong>Actions</strong></div><p className="muted">No approval requests.</p></section>}<div className="prototype-pagination rbac-request-pagination"><label className="label">Rows<select className="field" value={requestSize} onChange={(event) => void loadRequests(1, Number(event.target.value))}>{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select></label><span>Page {requests.page} of {requests.pages || 1} · {requests.total} requests</span><button className="btn-secondary" disabled={requests.page <= 1} onClick={() => void loadRequests(requests.page - 1, requestSize)}>Previous</button><button className="btn-secondary" disabled={requests.page >= requests.pages} onClick={() => void loadRequests(requests.page + 1, requestSize)}>Next</button></div></section></section>}
     {tab === 'policy' && policy && policyDraft && <div className="rbac-tab-content rbac-policy-content"><h2>Approval policy</h2><div className="rbac-domain-toggle tenant-domain-only rbac-domain-toggle-wide" role="status" aria-label="Approval policy domain">Tenant</div><p className="rbac-tab-intro">Configure maker-checker for the selected authorization domain. Role-change approval and runtime action approval are separate mechanisms.</p>
       <section className="panel"><div className="prototype-section-head"><div><h2>Role and permission change approvals</h2><p>Policy for the {domain} authorization domain. Saving creates a request for a different eligible checker.</p></div></div><form onSubmit={submitPolicy}><div className="rbac-policy-grid">
         <PolicyToggle label="Critical or four-eyes permissions" checked={policyDraft.require_role_grant_critical_or_four_eyes} onChange={(checked) => setPolicyDraft({ ...policyDraft, require_role_grant_critical_or_four_eyes: checked })} />
@@ -517,11 +584,11 @@ export function RolesAccess({ domain: initialDomain, staffHref = '/settings/staf
         <label className="label">Request expires after<select className="field" value={policyDraft.expires_after_hours} onChange={(event) => setPolicyDraft({ ...policyDraft, expires_after_hours: Number(event.target.value) })}><option value={24}>24 hours</option><option value={48}>48 hours</option><option value={72}>72 hours</option><option value={168}>7 days</option></select></label>
         <PolicyToggle label="Emergency break-glass" checked={policyDraft.break_glass_enabled} onChange={(checked) => setPolicyDraft({ ...policyDraft, break_glass_enabled: checked })} />
       </div><div className="rbac-policy-row rbac-policy-approvers"><div><strong>Who can approve</strong><span>Never the maker. Approvers must belong to the same authorization domain as the request.</span></div><div className="rbac-approver-tags">{(domain === 'platform' ? policyDraft.platform_eligible_roles : policyDraft.tenant_eligible_roles).map((role) => <span className="prototype-badge prototype-badge-info" key={role}>{role}</span>)}</div></div><div className="prototype-controls mt-3"><label className="label">Reason<input className="field" value={policyReason} minLength={8} maxLength={1000} onChange={(event) => setPolicyReason(event.target.value)} required /></label><button className="btn self-end" disabled={busy}>Submit policy change</button></div></form></section>
-      <section className="panel overflow-auto"><div className="prototype-section-head"><div><h2>Action approval rules (maker-checker)</h2><p>Each rule describes which permission actions require a second person. Rules are evaluated in priority order; lower numbers run first. Reordering does not remove an overlap.</p><p className="muted text-sm">Put specific rules before broad catch-all rules. <code>*</code> matches one part; <code>{'{a,b}'}</code> lists options.</p></div></div><table><thead><tr><th>Order</th><th>Rule</th><th>Patterns</th><th>Domain</th><th>Matches</th><th>Governed</th><th>Overlaps</th><th /></tr></thead><tbody>{policy.rules.items.filter((row) => ruleDrafts.some((draft) => draft.id === row.id)).map((row) => { const rule = ruleDrafts.find((draft) => draft.id === row.id) || row; return <tr key={rule.id} draggable onDragStart={() => setDragRuleId(rule.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropRule(rule.id)}><td><div className="rbac-order"><button type="button" aria-label={`Move ${rule.name} up`} onClick={() => moveRule(rule.id, -1)}>↑</button><strong>{rule.priority}</strong><button type="button" aria-label={`Move ${rule.name} down`} onClick={() => moveRule(rule.id, 1)}>↓</button></div></td><td>{rule.name}</td><td><code>{rule.patterns.join(' ; ')}</code></td><td><select className="field" value={rule.scope} onChange={(event) => setRuleDrafts((current) => current.map((item) => item.id === rule.id ? { ...item, scope: event.target.value as FourEyesRule['scope'] } : item))}><option>Off</option>{domain === 'tenant' && <option>Tenant</option>}{domain === 'platform' && <option>Platform</option>}<option>Both</option></select></td><td>{row.matches}</td><td>{row.governed}</td><td>{row.overlaps}</td><td><button type="button" className="btn-secondary" onClick={() => setRuleDrafts((current) => normalizedRules(current.filter((item) => item.id !== rule.id)))}>Remove</button></td></tr>; })}</tbody></table><div className="prototype-pagination"><label className="label">Rows<select className="field" value={policySize} onChange={(event) => void loadPolicy(1, Number(event.target.value))}><option>10</option><option>25</option><option>50</option></select></label><span>Page {policy.rules.page} of {policy.rules.pages || 1} · {policy.rules.total} rules</span><button className="btn-secondary" disabled={policy.rules.page <= 1} onClick={() => void loadPolicy(policy.rules.page - 1)}>Previous</button><button className="btn-secondary" disabled={policy.rules.page >= policy.rules.pages} onClick={() => void loadPolicy(policy.rules.page + 1)}>Next</button></div><form className="rbac-add-rule" onSubmit={addRule}><label className="label">Rule name<input className="field" name="name" minLength={3} required /></label><label className="label">Permission patterns, separated by ;<input className="field" name="patterns" required placeholder="billing.*.reverse ; *.*.refund" /></label><label className="label">Authorization domain<select className="field" name="scope" defaultValue={domain === 'platform' ? 'Platform' : 'Tenant'}>{domain === 'tenant' && <option>Tenant</option>}{domain === 'platform' && <option>Platform</option>}<option>Both</option></select></label><button className="btn-secondary self-end">Add rule to draft</button></form><form className="prototype-controls mt-3" onSubmit={submitRules}><label className="label">Reason<input className="field" value={ruleReason} minLength={8} maxLength={1000} onChange={(event) => setRuleReason(event.target.value)} required /></label><button className="btn self-end" disabled={busy}>Submit rule changes</button></form></section>
+      <section className="panel overflow-auto"><div className="prototype-section-head"><div><h2>Action approval rules (maker-checker)</h2><p>Each rule describes which permission actions require a second person. Rules are evaluated in priority order; lower numbers run first. Reordering does not remove an overlap.</p><p className="muted text-sm">Put specific rules before broad catch-all rules. <code>*</code> matches one part; <code>{'{a,b}'}</code> lists options.</p></div></div><table><thead><tr><th>Order</th><th>Rule</th><th>Patterns</th><th>Domain</th><th>Matches</th><th>Governed</th><th>Overlaps</th><th /></tr></thead><tbody>{policy.rules.items.filter((row) => ruleDrafts.some((draft) => draft.id === row.id)).map((row) => { const rule = ruleDrafts.find((draft) => draft.id === row.id) || row; return <tr key={rule.id} draggable onDragStart={() => setDragRuleId(rule.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => dropRule(rule.id)}><td><div className="rbac-order"><button type="button" aria-label={`Move ${rule.name} up`} onClick={() => moveRule(rule.id, -1)}>↑</button><strong>{rule.priority}</strong><button type="button" aria-label={`Move ${rule.name} down`} onClick={() => moveRule(rule.id, 1)}>↓</button></div></td><td>{rule.name}</td><td><code>{rule.patterns.join(' ; ')}</code></td><td><select className="field" value={rule.scope} onChange={(event) => setRuleDrafts((current) => current.map((item) => item.id === rule.id ? { ...item, scope: event.target.value as FourEyesRule['scope'] } : item))}><option>Off</option>{domain === 'tenant' && <option>Tenant</option>}{domain === 'platform' && <option>Platform</option>}<option>Both</option></select></td><td>{row.matches}</td><td>{row.governed}</td><td>{row.overlaps}</td><td><button type="button" className="btn-secondary" onClick={() => setRuleDrafts((current) => normalizedRules(current.filter((item) => item.id !== rule.id)))}>Remove</button></td></tr>; })}</tbody></table><div className="prototype-pagination"><label className="label">Rows<select className="field" value={policySize} onChange={(event) => void loadPolicy(1, Number(event.target.value))}>{PAGE_SIZE_OPTIONS.map((size) => <option key={size}>{size}</option>)}</select></label><span>Page {policy.rules.page} of {policy.rules.pages || 1} · {policy.rules.total} rules</span><button className="btn-secondary" disabled={policy.rules.page <= 1} onClick={() => void loadPolicy(policy.rules.page - 1)}>Previous</button><button className="btn-secondary" disabled={policy.rules.page >= policy.rules.pages} onClick={() => void loadPolicy(policy.rules.page + 1)}>Next</button></div><form className="rbac-add-rule" onSubmit={addRule}><label className="label">Rule name<input className="field" name="name" minLength={3} required /></label><label className="label">Permission patterns, separated by ;<input className="field" name="patterns" required placeholder="billing.*.reverse ; *.*.refund" /></label><label className="label">Authorization domain<select className="field" name="scope" defaultValue={domain === 'platform' ? 'Platform' : 'Tenant'}>{domain === 'tenant' && <option>Tenant</option>}{domain === 'platform' && <option>Platform</option>}<option>Both</option></select></label><button className="btn-secondary self-end">Add rule to draft</button></form><form className="prototype-controls mt-3" onSubmit={submitRules}><label className="label">Reason<input className="field" value={ruleReason} minLength={8} maxLength={1000} onChange={(event) => setRuleReason(event.target.value)} required /></label><button className="btn self-end" disabled={busy}>Submit rule changes</button></form></section>
       <section className="panel"><div className="prototype-section-head"><div><h2>Overlapping rule matches</h2><p>Diagnostic view of permissions matched by more than one enabled rule.</p></div><span className="prototype-badge">{policy.overlaps.length} permissions</span></div>{policy.overlaps.length ? <div className="rbac-overlaps">{policy.overlaps.map((item) => <details key={item.permission_key}><summary><span><strong>{item.label}</strong><code>{item.permission_key}</code></span><span>{item.match_count} matching rules</span></summary><ol>{item.rules.map((rule) => <li key={rule.id}><strong>{rule.priority}</strong> {rule.name} {rule.governs && <span className="prototype-badge prototype-badge-good">Governs</span>}</li>)}</ol></details>)}</div> : <p className="muted">No permissions match more than one enabled rule.</p>}</section>
       <section className="panel"><div className="prototype-section-head"><div><h2>New permissions awaiting review</h2><p>New catalogue keys remain default-deny until they are classified.</p></div><span className={`prototype-badge ${policy.awaiting_review.length ? 'prototype-badge-warn' : 'prototype-badge-good'}`}>{policy.awaiting_review.length}</span></div>{policy.awaiting_review.length ? <ul className="space-y-2">{policy.awaiting_review.map((permission) => <li key={permission.key}><strong>{permission.resource_name} · {permission.action.replaceAll('_', ' ')}</strong><br /><code>{permission.key}</code></li>)}</ul> : <p className="muted">All registered permissions have been reviewed.</p>}</section>
     </div>}
-    {tab === 'history' && <section className="rbac-tab-content"><h2>Change history</h2><p className="rbac-tab-intro">Every save is a numbered version with who, why and what changed.</p><section className="panel rbac-history-card"><div className="rbac-history-toolbar"><span>Rows</span><select className="field" value={history.size} onChange={(event) => void api<Page<History>>(`${prefix}/history?page=1&size=${Number(event.target.value)}`).then(setHistory).catch(() => setMessage('History could not be loaded'))}><option value={10}>10</option><option value={25}>25</option><option value={50}>50</option></select><span className="muted">Page {history.page} of {history.pages || 1}</span><button className="btn-secondary" disabled={history.page <= 1} onClick={() => void api<Page<History>>(`${prefix}/history?page=${history.page - 1}&size=${history.size}`).then(setHistory)}>Previous</button><button className="btn-secondary" disabled={history.page >= history.pages} onClick={() => void api<Page<History>>(`${prefix}/history?page=${history.page + 1}&size=${history.size}`).then(setHistory)}>Next</button></div><div className="rbac-history-list">{history.items.map((item, index) => <article className="rbac-history-version" key={item.id}><div><h3>Version {item.version}</h3><p className="muted">By {item.author_id} · {new Date(item.created_at).toLocaleString()}</p><p>{item.reason || 'No reason supplied.'}</p><p className="muted">{item.changes.length} change{item.changes.length === 1 ? '' : 's'} · {item.approver_ids.join(', ') || 'Review pending'}{item.break_glass ? ' · Break-glass' : ''}</p></div><div className="rbac-history-actions"><span className="prototype-badge prototype-badge-good">{index === 0 ? 'Current' : 'Applied'}</span><button className="btn-secondary" type="button" disabled title="Version restore is not exposed by the current RBAC API">Restore this version</button></div></article>)}{!history.items.length && <p className="muted">No policy versions have been applied.</p>}</div><p className="muted text-sm">Restore controls are shown for workflow parity but remain unavailable until the backend exposes a version-restore operation.</p></section></section>}
+    {tab === 'history' && <section className="rbac-tab-content"><h2>Change history</h2><p className="rbac-tab-intro">Every save is a numbered version with who, why and what changed.</p><section className="panel rbac-history-card"><div className="rbac-history-toolbar"><span>Rows</span><select className="field" value={history.size} onChange={(event) => void api<Page<History>>(`${prefix}/history?page=1&size=${Number(event.target.value)}`).then(setHistory).catch(() => setMessage('History could not be loaded'))}>{PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size}</option>)}</select><span className="muted">Page {history.page} of {history.pages || 1}</span><button className="btn-secondary" disabled={history.page <= 1} onClick={() => void api<Page<History>>(`${prefix}/history?page=${history.page - 1}&size=${history.size}`).then(setHistory)}>Previous</button><button className="btn-secondary" disabled={history.page >= history.pages} onClick={() => void api<Page<History>>(`${prefix}/history?page=${history.page + 1}&size=${history.size}`).then(setHistory)}>Next</button></div><div className="rbac-history-list">{history.items.map((item, index) => <article className="rbac-history-version" key={item.id}><div><h3>Version {item.version}</h3><p className="muted">By {item.author_id} · {new Date(item.created_at).toLocaleString()}</p><p>{item.reason || 'No reason supplied.'}</p><p className="muted">{item.changes.length} change{item.changes.length === 1 ? '' : 's'} · {item.approver_ids.join(', ') || 'Review pending'}{item.break_glass ? ' · Break-glass' : ''}</p></div><div className="rbac-history-actions"><span className="prototype-badge prototype-badge-good">{index === 0 ? 'Current' : 'Applied'}</span><button className="btn-secondary" type="button" disabled title="Version restore is not exposed by the current RBAC API">Restore this version</button></div></article>)}{!history.items.length && <p className="muted">No policy versions have been applied.</p>}</div><p className="muted text-sm">Restore controls are shown for workflow parity but remain unavailable until the backend exposes a version-restore operation.</p></section></section>}
   </section>;
 }
 

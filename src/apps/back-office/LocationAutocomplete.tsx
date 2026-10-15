@@ -7,6 +7,7 @@ export type LocationSuggestion = {
   latitude: number;
   longitude: number;
   type: string;
+  timezone?: string;
   address?: Record<string, string>;
 };
 
@@ -18,6 +19,7 @@ export function LocationAutocomplete({
   initialLongitude = null,
   initialPlaceId = '',
   required = false,
+  onSelectionChange,
 }: {
   region: string;
   inputName: string;
@@ -26,6 +28,7 @@ export function LocationAutocomplete({
   initialLongitude?: number | null;
   initialPlaceId?: string;
   required?: boolean;
+  onSelectionChange?: (result: LocationSuggestion | null) => void;
 }) {
   const [query, setQuery] = useState(initialValue);
   const [results, setResults] = useState<LocationSuggestion[]>([]);
@@ -75,7 +78,10 @@ export function LocationAutocomplete({
 
   function updateQuery(value: string) {
     setQuery(value);
-    if (selection) setSelection(null);
+    if (selection) {
+      setSelection(null);
+      onSelectionChange?.(null);
+    }
   }
 
   function isStreetGroup(result: LocationSuggestion) {
@@ -90,6 +96,7 @@ export function LocationAutocomplete({
     if (isStreetGroup(result)) {
       const street = result.address?.road || result.address?.street || result.display_name;
       setSelection(null);
+      onSelectionChange?.(null);
       setSearching(true);
       setOpen(true);
       try {
@@ -110,6 +117,7 @@ export function LocationAutocomplete({
     setSelection(result);
     setResults([]);
     setOpen(false);
+    onSelectionChange?.(result);
   }
 
   return (

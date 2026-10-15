@@ -11,9 +11,10 @@ import {
 } from 'lucide-react';
 import { api } from './lib/api';
 import { WorkspaceLoadingOverlay } from './WorkspaceLoadingOverlay';
+import { DEFAULT_PAGE_SIZE, Pagination } from './components/Pagination';
 import type { ApprovalNotification, ApprovalNotificationFeed } from './components/ApprovalBell';
 
-type SystemNotificationFeed = { items: ApprovalNotification[]; unread_count: number; page: number; pages: number };
+type SystemNotificationFeed = { items: ApprovalNotification[]; unread_count: number; page: number; size: number; total: number; pages: number };
 
 function category(item: ApprovalNotification) {
   const text = `${item.kind} ${item.title} ${item.detail}`.toLowerCase();
@@ -56,7 +57,7 @@ function cta(item: ApprovalNotification) {
 function ctaHref(item: ApprovalNotification, basePath: string, approvalsHref: string) {
   if (item.request_id) return approvalsHref;
   const adminPath = basePath.replace(/\/settings\/?$/, '');
-  if (item.thread_id) return `${adminPath}/care?thread=${encodeURIComponent(item.thread_id)}`;
+  if (item.thread_id) return `${adminPath}/patients/communication?thread=${encodeURIComponent(item.thread_id)}`;
   const kind = item.kind.replace(/^system:/, '').toLowerCase();
   if (kind.includes('payment') || kind.includes('billing')) return `${adminPath}/billing`;
   if (kind.includes('appointment') || kind.includes('schedule')) return `${adminPath}/schedule`;
@@ -88,7 +89,9 @@ export function NotificationCenter({ approvalsHref, basePath }: { approvalsHref:
   const [items, setItems] = useState<ApprovalNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [pages, setPages] = useState(1);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
 
@@ -97,7 +100,7 @@ export function NotificationCenter({ approvalsHref, basePath }: { approvalsHref:
     try {
       const [approvalResult, systemResult] = await Promise.all([
         api<ApprovalNotificationFeed>('/rbac/notifications').catch(() => ({ items: [], unread_count: 0 })),
-        api<SystemNotificationFeed>(`/notifications/feed?page=${page}&size=10`).catch(() => ({ items: [], unread_count: 0, page, pages: 0 })),
+        api<SystemNotificationFeed>(`/notifications/feed?page=${page}&size=${pageSize}`).catch(() => ({ items: [], unread_count: 0, page, size: pageSize, total: 0, pages: 0 })),
       ]);
       const approvalItems = approvalResult.items || [];
       const systemItems = (systemResult.items || []).map((item) => ({ ...item, kind: item.kind.startsWith('system:') ? item.kind : `system:${item.kind}` }));
@@ -111,6 +114,7 @@ export function NotificationCenter({ approvalsHref, basePath }: { approvalsHref:
       setItems(merged);
       setUnreadCount((approvalResult.unread_count || 0) + (systemResult.unread_count || 0));
       setPages(Math.max(1, systemResult.pages || 1));
+      setTotal(systemResult.total || 0);
       setMessage('');
     } catch (reason) {
       setMessage(reason instanceof Error ? reason.message : 'Notifications could not be loaded');
@@ -119,7 +123,7 @@ export function NotificationCenter({ approvalsHref, basePath }: { approvalsHref:
     }
   }
 
-  useEffect(() => { void load(); }, [page]);
+  useEffect(() => { void load(); }, [page, pageSize]);
 
   const grouped = useMemo(() => {
     const groups = new Map<string, ApprovalNotification[]>();
@@ -150,7 +154,7 @@ export function NotificationCenter({ approvalsHref, basePath }: { approvalsHref:
           </article>)}
         </Fragment>)}
       </div>
-      <div className="approval-bell-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button><span>Page {page} of {pages}</span><button type="button" disabled={page >= pages} onClick={() => setPage((value) => value + 1)}>Next</button></div>
+      <Pagination page={page} pageSize={pageSize} total={total} pages={pages} label="notifications" busy={loading} onPage={setPage} onPageSize={(size) => { setPageSize(size); setPage(1); }} />
     </section>
   </>;
 }

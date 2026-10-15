@@ -24,7 +24,11 @@ type Statement = {
   payment_plans: {
     id: string;
     invoice_id: string;
-    installments: { due: string; amount_cents: number }[];
+    installments: {
+      due: string;
+      amount_cents: number;
+      frequency?: "monthly" | "biweekly";
+    }[];
   }[];
 };
 type Props = {
@@ -79,9 +83,17 @@ export function Billing(props: Props) {
     feeVersions: [],
   });
   const [pendingRefund, setPendingRefund] = useState<PendingRefund | null>(null);
+  const [selectedPatientId, setSelectedPatientId] = useState(() => new URLSearchParams(window.location.search).get("patient") || patients[0]?.id || "");
+  useEffect(() => {
+    if (!patients.some((patient) => patient.id === selectedPatientId)) {
+      setSelectedPatientId(patients[0]?.id || "");
+    }
+  }, [patients, selectedPatientId]);
   const patchState = (next: Partial<BillingState>) =>
     setState((current) => ({ ...current, ...next }));
   const invoice = invoices.find((item) => item.id === state.selectedInvoiceId);
+  const selectedPatient = patients.find((patient) => patient.id === selectedPatientId);
+  const selectedPatientLocation = reference.locations.find((location) => location.id === selectedPatient?.location_id);
   const loadStatement = async () => {
     if (invoice) patchState({ statement: await api<Statement>(`/billing/statement/${invoice.patient_id}`) });
   };
@@ -155,6 +167,7 @@ export function Billing(props: Props) {
       await api(`/billing/invoices/${invoice.id}/payment-plan`, {
         installments: Number(form.get("count")),
         first_due: form.get("due"),
+        frequency: form.get("frequency"),
       });
       await loadStatement();
     });
@@ -198,6 +211,25 @@ export function Billing(props: Props) {
         description="Invoices, versioned fees, balanced ledger postings, patient statements, and payment providers."
       />
       {state.error && <p role="alert">{state.error}</p>}
+      <section className="panel mb-5" aria-labelledby="billing-locations-title">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="billing-locations-title" className="font-semibold">Tenant locations</h2>
+            <p className="muted text-sm">Billing and fee schedules use the locations configured for this clinic.</p>
+          </div>
+          <span className="badge">{reference.locations.length} configured</span>
+        </div>
+        {reference.locations.length > 0 ? (
+          <ul className="mt-4 grid gap-2 md:grid-cols-2">
+            {reference.locations.map((location) => (
+              <li className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm" key={location.id}>
+                <span><strong>{location.name}</strong>{location.address && <span className="muted"> · {location.address}</span>}</span>
+                <span className={`badge ${location.active === false ? 'text-[var(--ink-muted)]' : ''}`}>{location.active === false ? 'Inactive' : 'Open'}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="muted mt-4 text-sm">No locations are configured for this clinic.</p>}
+      </section>
       <div className="mb-5 grid gap-5">
         <form
           className="panel space-y-3"
@@ -205,7 +237,7 @@ export function Billing(props: Props) {
         >
           <h2 className="font-semibold">Create invoice</h2>
           <Field label="Patient">
-            <select className="field" name="patient">
+            <select className="field" name="patient" value={selectedPatientId} onChange={(event) => setSelectedPatientId(event.target.value)}>
               {patients.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.first_name} {p.last_name}
@@ -213,6 +245,10 @@ export function Billing(props: Props) {
               ))}
             </select>
           </Field>
+          <Field label="Location">
+            <input className="field" value={selectedPatientLocation?.name || "No location assigned"} readOnly aria-describedby="billing-location-help" />
+          </Field>
+          <p id="billing-location-help" className="muted text-xs">The invoice will use the selected patient’s assigned location.</p>
           <fieldset>
             <legend className="mb-2 text-sm font-medium">Services</legend>
             {services.map((s) => (
@@ -308,6 +344,7 @@ export function Billing(props: Props) {
           <thead>
             <tr>
               <th>Patient</th>
+              <th>Location</th>
               <th>Invoice</th>
               <th>Total</th>
               <th>Balance</th>
@@ -322,6 +359,7 @@ export function Billing(props: Props) {
                   {patients.find((p) => p.id === i.patient_id)?.first_name}{" "}
                   {patients.find((p) => p.id === i.patient_id)?.last_name}
                 </td>
+                <td>{reference.locations.find((location) => location.id === i.location_id)?.name || "—"}</td>
                 <td>{i.lines.map((l) => l.name).join(", ")}</td>
                 <td>{money(i.total_cents + i.adjustment_cents)}</td>
                 <td>
@@ -422,6 +460,12 @@ export function Billing(props: Props) {
                   required
                 />
               </Field>
+              <Field label="Frequency">
+                <select className="field" name="frequency" defaultValue="monthly" required>
+                  <option value="monthly">Monthly</option>
+                  <option value="biweekly">Bi-weekly</option>
+                </select>
+              </Field>
               <Field label="First due date">
                 <input name="due" className="field" type="date" required />
               </Field>
@@ -514,7 +558,9 @@ export function Billing(props: Props) {
               {state.statement.payment_plans.filter((p) => p.invoice_id === invoice.id).map((p) => (
                 <div key={p.id} className="mt-5 overflow-auto rounded-lg border border-[var(--border)]">
                   <table>
-                    <caption className="p-3 text-left text-sm font-semibold">Installment schedule</caption>
+                    <caption className="p-3 text-left text-sm font-semibold">
+                      Installment schedule · {p.installments[0]?.frequency === "biweekly" ? "Bi-weekly" : "Monthly"}
+                    </caption>
                     <thead><tr><th>Installment</th><th>Due date</th><th>Amount</th><th>Timing</th></tr></thead>
                     <tbody>{p.installments.map((item, index) => {
                       const due = new Date(`${item.due}T00:00:00`);

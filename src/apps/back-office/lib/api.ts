@@ -12,6 +12,7 @@ let accessToken = typeof window === "undefined" ? "" : readStoredToken();
 let tenantSlug = "";
 let activeLocationId = "";
 const apiBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const inFlightGets = new Map<string, Promise<unknown>>();
 const inFlightMutations = new Map<string, Promise<unknown>>();
 export function setToken(value: string) {
   accessToken = value;
@@ -39,7 +40,7 @@ export async function api<T>(
   const requestMethod = method.toUpperCase();
   const serializedBody = body === undefined ? "" : JSON.stringify(body);
   const requestKey = `${requestMethod}:${path}:${serializedBody}:${accessToken}:${tenantSlug}:${activeLocationId}`;
-  const existing = requestMethod === "GET" ? undefined : inFlightMutations.get(requestKey);
+  const existing = (requestMethod === "GET" ? inFlightGets : inFlightMutations).get(requestKey);
   if (existing) return existing as Promise<T>;
   const request = (async () => {
     const response = await fetch(`${apiBase}/v1${path}`, {
@@ -70,11 +71,19 @@ export async function api<T>(
           : typeof detail?.message === "string"
             ? detail.message
             : "Request failed";
-      throw new Error(message);
+      const error = new Error(message) as Error & { status?: number; code?: string };
+      error.status = response.status;
+      error.code = typeof detail === "object" && detail && "code" in detail ? String(detail.code) : undefined;
+      window.dispatchEvent(new CustomEvent("dhmis:api-error", { detail: { message, status: response.status, code: error.code } }));
+      throw error;
     }
     return response.json() as Promise<T>;
   })();
-  if (requestMethod === "GET") return request;
+  if (requestMethod === "GET") {
+    inFlightGets.set(requestKey, request);
+    try { return await request; }
+    finally { if (inFlightGets.get(requestKey) === request) inFlightGets.delete(requestKey); }
+  }
   window.dispatchEvent(new CustomEvent("dhmis:mutation-start", { detail: { requestKey } }));
   inFlightMutations.set(requestKey, request);
   try {
